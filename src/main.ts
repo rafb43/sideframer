@@ -776,15 +776,24 @@ function positionInspector(): void {
   const w = insRect.width || INSPECTOR_W;
   const h = insRect.height || 260;
 
-  // Prefer right side of the box; flip to the left if off-screen.
-  let left = rect.right + INSPECTOR_GAP;
+  // Prefer left side of the box; flip to the right if off-screen.
+  let left = rect.left - w - INSPECTOR_GAP;
+  if (left < 16) {
+    left = rect.right + INSPECTOR_GAP;
+  }
   if (left + w > window.innerWidth - 16) {
-    left = rect.left - w - INSPECTOR_GAP;
+    left = window.innerWidth - w - 16;
   }
   if (left < 16) left = 16;
-  if (left + w > window.innerWidth - 16) left = window.innerWidth - w - 16;
 
-  let top = rect.top;
+  // Align the shape grid (not the inspector's top edge) with the box's top
+  // so the user's mouse can travel straight from box → desired shape
+  // without the "shape" title sitting in the way.
+  const shapeGridEl = document.querySelector<HTMLDivElement>("#shape-grid");
+  const shapeOffsetY = shapeGridEl
+    ? shapeGridEl.getBoundingClientRect().top - insRect.top
+    : 0;
+  let top = rect.top - shapeOffsetY;
   if (top + h > window.innerHeight - 16) top = window.innerHeight - h - 16;
   if (top < 76) top = 76;
 
