@@ -310,12 +310,12 @@ function buildSVG(): string {
         width="${CANVAS_W - 2 * PAD}" height="${CANVAS_H - 2 * PAD}"
         fill="none" stroke="#c8c4b8" stroke-width="2" rx="6"/>
 
-  <text class="axis" x="${CANVAS_W / 2}" y="${PAD - 30}" text-anchor="middle">↑   DEPENDENCIES</text>
-  <text class="axis" x="${CANVAS_W / 2}" y="${CANVAS_H - PAD + 48}" text-anchor="middle">SIDE-EFFECTS   ↓</text>
+  <text class="axis" x="${CANVAS_W / 2}" y="${PAD - 30}" text-anchor="middle">DEPENDENCIES</text>
+  <text class="axis" x="${CANVAS_W / 2}" y="${CANVAS_H - PAD + 48}" text-anchor="middle">SIDE-EFFECTS</text>
   <text class="axis" x="${PAD - 38}" y="${CANVAS_H / 2}" text-anchor="middle"
-        transform="rotate(-90, ${PAD - 38}, ${CANVAS_H / 2})">←   INPUT</text>
+        transform="rotate(-90, ${PAD - 38}, ${CANVAS_H / 2})">INPUT</text>
   <text class="axis" x="${CANVAS_W - PAD + 38}" y="${CANVAS_H / 2}" text-anchor="middle"
-        transform="rotate(90, ${CANVAS_W - PAD + 38}, ${CANVAS_H / 2})">OUTPUT   →</text>
+        transform="rotate(90, ${CANVAS_W - PAD + 38}, ${CANVAS_H / 2})">OUTPUT</text>
 
   <text class="theme-line" x="${PAD}" y="${PAD - 56}">${themeStr}</text>
 
@@ -568,43 +568,43 @@ function newDiagram(): void {
 // ---------------- PNG export ----------------
 
 async function copyPNG(): Promise<void> {
+  // Capture XML synchronously inside the user gesture. Hide selection from export.
   const prevSelected = selectedId;
   selectedId = null;
   render();
-
   const exportSvg = document.querySelector<SVGSVGElement>("#svg-root")!;
   const xml = new XMLSerializer().serializeToString(exportSvg);
-
   selectedId = prevSelected;
 
-  const blob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  try {
-    const img = new Image();
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error("failed to load SVG into Image"));
+  // Build the PNG blob lazily; the gesture grant survives a Promise<Blob> in ClipboardItem.
+  const pngPromise: Promise<Blob> = (async () => {
+    const svgBlob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(svgBlob);
+    try {
+      const img = new Image();
       img.src = url;
-    });
+      await img.decode();
+      const c = document.createElement("canvas");
+      c.width = CANVAS_W;
+      c.height = CANVAS_H;
+      const ctx = c.getContext("2d")!;
+      ctx.fillStyle = "#fbfaf6";
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0, CANVAS_W, CANVAS_H);
+      return await new Promise<Blob>((resolve, reject) => {
+        c.toBlob((b) => (b ? resolve(b) : reject(new Error("canvas.toBlob failed"))), "image/png");
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  })();
 
-    const c = document.createElement("canvas");
-    c.width = CANVAS_W;
-    c.height = CANVAS_H;
-    const ctx = c.getContext("2d")!;
-    ctx.fillStyle = "#fbfaf6";
-    ctx.fillRect(0, 0, c.width, c.height);
-    ctx.drawImage(img, 0, 0, CANVAS_W, CANVAS_H);
-
-    const pngBlob = await new Promise<Blob>((resolve, reject) => {
-      c.toBlob((b) => (b ? resolve(b) : reject(new Error("canvas.toBlob failed"))), "image/png");
-    });
-
-    await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": pngPromise })]);
     flash("PNG copied to clipboard");
   } catch (err) {
     flash("copy failed: " + (err as Error).message, true);
   } finally {
-    URL.revokeObjectURL(url);
     render();
   }
 }
