@@ -711,10 +711,15 @@ function onMouseDown(e: MouseEvent): void {
   }
 
   // Single click on empty canvas just deselects.
-  // Double-click adds a new box (see onDoubleClick).
-  selectedId = null;
-  selectedConnectorId = null;
-  render();
+  // Double-click adds a new box (see onDoubleClick). render() rebuilds the
+  // SVG element wholesale, which would break the browser's double-click
+  // detection mid-sequence — so only re-render when something actually
+  // needs to be deselected.
+  if (selectedId !== null || selectedConnectorId !== null) {
+    selectedId = null;
+    selectedConnectorId = null;
+    render();
+  }
 }
 
 function onDoubleClick(e: MouseEvent): void {
