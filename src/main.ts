@@ -690,6 +690,11 @@ function handleConnectClick(id: string): void {
   } else if (connectFrom === id) {
     // clicking the source again cancels
     connectFrom = null;
+  } else if (state.connectors.some((c) => c.from === connectFrom && c.to === id)) {
+    // Connector already exists from source → target. Don't duplicate; instead
+    // promote the target as the new source so the user can walk a chain
+    // (A → B → C → D) by clicking each downstream box in sequence.
+    connectFrom = id;
   } else {
     state.connectors.push({ id: uid(), from: connectFrom, to: id });
     // connectFrom stays set so the user can fan out from the same source
