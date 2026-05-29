@@ -231,9 +231,9 @@ centerSublabelInput.value = state.centerSublabel;
 bgSelect.value = state.background;
 
 const HINTS: Record<Mode, string> = {
-  view: "view mode — read-only canvas",
-  author: "click in the frame to add a box · drag to move · select then edit below",
-  connect: "click two boxes (or the center) to connect them · arrow shows flow direction",
+  view: "view mode — read-only · press  a  (author)  or  c  (connect)",
+  author: "click to add a box · drag to move · select then edit  ·  esc / a / c switch modes",
+  connect: "click two boxes (or the center) to connect them · arrow = flow  ·  esc / a / c switch modes",
 };
 
 function setMode(m: Mode): void {
@@ -291,13 +291,17 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") {
     if (active instanceof HTMLElement) active.blur();
-    if (connectFrom !== null) {
-      connectFrom = null;
-      render();
-    } else if (selectedId !== null || selectedConnectorId !== null) {
-      selectedId = null;
-      selectedConnectorId = null;
-      render();
+    setMode("view");
+    return;
+  }
+  if (!typing) {
+    if (e.key === "a" || e.key === "A") {
+      setMode("author");
+      return;
+    }
+    if (e.key === "c" || e.key === "C") {
+      setMode("connect");
+      return;
     }
   }
 });
