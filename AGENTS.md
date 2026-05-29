@@ -61,23 +61,25 @@ subprocess (producer)  →  document (payload entity)  →  @center
 
 The `subprocess` names *who* sent it — a user app, a scheduler, an upstream service, a cron. The `document` names *what arrived on the wire* — the message type, the request body shape, the event name.
 
-### Dependencies (top) — config OR live-call chain
+### Dependencies (top) — center initiates, chains stack vertically
 
-There are two flavors. Pick the one that matches reality:
+The center is the *initiator* of every dependency. The first arrow goes from `@center` outward — to the request document for a live call, or to the document directly for a static dep. There is **no return arrow** from the chain back to `@center`: the dependency relationship is implicit in the chain pointing away from the center.
+
+Two flavors:
 
 **Static / preserved** (config blob, lookup table, pre-loaded resource):
 
 ```
-document (the config / preserved data)  →  @center
+@center  →  document
 ```
 
 **Live call** (a round trip to a service):
 
 ```
-document (request)  →  subprocess (the service)  →  document (response)  →  @center
+@center  →  document (request)  →  subprocess (the service)  →  document (response)
 ```
 
-The two documents make explicit *what we ask for* and *what comes back*. Repeat the chain for each distinct dependency. Anchor every chain at the top of the center.
+**Stack each dependency as its own row above the center**, rather than spreading them in parallel across the top. The diagram should read as a list — first dep, second dep, third dep — with chain details extending sideways from each row. When order matters, top-to-bottom = call order.
 
 ### Output (right) — payload AND receiver
 
