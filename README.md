@@ -19,6 +19,8 @@ Open http://localhost:5173.
 - [x] Edit selected box (label, sublabel) via the bottom inspector
 - [x] Theme + center label editing in the top toolbar
 - [x] Copy PNG to clipboard
+- [x] Persist working draft to `localStorage`
+- [x] Share via URL fragment (`#d=<base64url-of-JSON>`) — hash beats localStorage on load
 - [ ] Save diagram as B3nd URI + payload (next round)
 - [ ] Load diagram from B3nd URI (next round)
 

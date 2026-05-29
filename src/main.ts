@@ -81,6 +81,43 @@ function loadDraft(): Partial<DiagramState> | null {
   }
 }
 
+function b64urlEncode(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function b64urlDecode(s: string): string {
+  const padded = s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4);
+  const bin = atob(padded);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+function decodeStateFromHash(): Partial<DiagramState> | null {
+  const hash = window.location.hash;
+  if (!hash) return null;
+  const m = hash.match(/[#&]d=([^&]+)/);
+  if (!m) return null;
+  try {
+    const parsed = JSON.parse(b64urlDecode(m[1]));
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed as Partial<DiagramState>;
+  } catch {
+    return null;
+  }
+}
+
+function writeStateToHash(): void {
+  try {
+    history.replaceState(null, "", `#d=${b64urlEncode(JSON.stringify(state))}`);
+  } catch {
+    // ignore security/quota errors
+  }
+}
+
 // ---------------- DOM bootstrap ----------------
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -155,7 +192,7 @@ const boxSublabelInput = document.querySelector<HTMLInputElement>("#box-sublabel
 const bgSelect = document.querySelector<HTMLSelectElement>("#bg-select")!;
 const boxShapeSelect = document.querySelector<HTMLSelectElement>("#box-shape-select")!;
 
-Object.assign(state, loadDraft() ?? {});
+Object.assign(state, decodeStateFromHash() ?? loadDraft() ?? {});
 
 themeInput.value = state.theme;
 centerLabelInput.value = state.centerLabel;
@@ -194,6 +231,18 @@ document.addEventListener("keydown", (e) => {
       render();
     }
   }
+});
+
+window.addEventListener("hashchange", () => {
+  const fromHash = decodeStateFromHash();
+  if (!fromHash) return;
+  Object.assign(state, fromHash);
+  themeInput.value = state.theme;
+  centerLabelInput.value = state.centerLabel;
+  centerSublabelInput.value = state.centerSublabel;
+  bgSelect.value = state.background;
+  selectedId = null;
+  render();
 });
 
 // ---------------- Helpers ----------------
@@ -239,6 +288,7 @@ function render(): void {
   bindCanvasEvents();
   syncInspector();
   saveDraft();
+  writeStateToHash();
 }
 
 function buildSVG(): string {
