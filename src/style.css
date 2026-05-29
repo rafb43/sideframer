@@ -88,6 +88,51 @@ body { min-height: 100vh; }
   cursor: pointer;
 }
 
+/* Segmented control (mode switcher) */
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  background: white;
+  height: 30px;
+}
+
+.segmented button {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 0 14px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: white;
+  color: var(--mute);
+  cursor: pointer;
+}
+
+.segmented button:last-child { border-right: 0; }
+
+.segmented button.active {
+  background: var(--ink);
+  color: white;
+}
+
+.segmented button:not(.active):hover { background: #f5f2ea; }
+
+/* Mode-aware cursors on the canvas */
+
+#svg-root.mode-view g.box,
+#svg-root.mode-view g.center,
+#svg-root.mode-view g.connector { cursor: default; }
+
+#svg-root.mode-author g.box { cursor: grab; }
+#svg-root.mode-author g.box:active { cursor: grabbing; }
+#svg-root.mode-author g.connector { cursor: pointer; }
+
+#svg-root.mode-connect g.box,
+#svg-root.mode-connect g.center,
+#svg-root.mode-connect g.connector { cursor: pointer; }
+
 .spacer { flex: 1; }
 
 .btn {

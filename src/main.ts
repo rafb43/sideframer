@@ -24,13 +24,24 @@ interface Box {
 
 type Background = "clean" | "grid" | "sections" | "diagonals" | "gradient";
 
+type Mode = "view" | "author" | "connect";
+
+interface Connector {
+  id: string;
+  from: string;
+  to: string;
+}
+
 interface DiagramState {
   theme: string;
   centerLabel: string;
   centerSublabel: string;
   background: Background;
   boxes: Box[];
+  connectors: Connector[];
 }
+
+const CENTER_ID = "@center";
 
 // ---------------- Layout constants ----------------
 
@@ -52,10 +63,14 @@ const state: DiagramState = {
   centerSublabel: "",
   background: "grid",
   boxes: [],
+  connectors: [],
 };
 
 let selectedId: string | null = null;
+let selectedConnectorId: string | null = null;
 let dragState: { id: string; offsetX: number; offsetY: number; moved: boolean } | null = null;
+let currentMode: Mode = "author";
+let connectFrom: string | null = null;
 
 // ---------------- Persistence ----------------
 
@@ -118,6 +133,11 @@ function writeStateToHash(): void {
   }
 }
 
+function normalizeState(): void {
+  if (!Array.isArray(state.boxes)) state.boxes = [];
+  if (!Array.isArray(state.connectors)) state.connectors = [];
+}
+
 // ---------------- DOM bootstrap ----------------
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -146,8 +166,16 @@ app.innerHTML = `
         <option value="gradient">gradient</option>
       </select>
     </label>
+    <div class="field">
+      <span>mode</span>
+      <div class="segmented" id="mode-seg">
+        <button type="button" data-mode="view">view</button>
+        <button type="button" data-mode="author">author</button>
+        <button type="button" data-mode="connect">connect</button>
+      </div>
+    </div>
     <div class="spacer"></div>
-    <span class="hint">click in the frame to add a box · drag to move · select then edit below</span>
+    <span class="hint" id="hint"></span>
     <button id="copy-png" class="btn">copy PNG</button>
     <button id="new-diagram" class="btn">new</button>
   </header>
@@ -191,13 +219,39 @@ const boxLabelInput = document.querySelector<HTMLInputElement>("#box-label-input
 const boxSublabelInput = document.querySelector<HTMLInputElement>("#box-sublabel-input")!;
 const bgSelect = document.querySelector<HTMLSelectElement>("#bg-select")!;
 const boxShapeSelect = document.querySelector<HTMLSelectElement>("#box-shape-select")!;
+const modeSeg = document.querySelector<HTMLDivElement>("#mode-seg")!;
+const hintSpan = document.querySelector<HTMLSpanElement>("#hint")!;
 
 Object.assign(state, decodeStateFromHash() ?? loadDraft() ?? {});
+normalizeState();
 
 themeInput.value = state.theme;
 centerLabelInput.value = state.centerLabel;
 centerSublabelInput.value = state.centerSublabel;
 bgSelect.value = state.background;
+
+const HINTS: Record<Mode, string> = {
+  view: "view mode — read-only canvas",
+  author: "click in the frame to add a box · drag to move · select then edit below",
+  connect: "click two boxes (or the center) to connect them · arrow shows flow direction",
+};
+
+function setMode(m: Mode): void {
+  currentMode = m;
+  connectFrom = null;
+  if (m !== "author") selectedId = null;
+  if (m === "view") selectedConnectorId = null;
+  updateModeUI();
+  render();
+}
+
+function updateModeUI(): void {
+  modeSeg.querySelectorAll("button[data-mode]").forEach((b) => {
+    const btn = b as HTMLButtonElement;
+    btn.classList.toggle("active", btn.dataset.mode === currentMode);
+  });
+  hintSpan.textContent = HINTS[currentMode];
+}
 
 themeInput.addEventListener("input", () => { state.theme = themeInput.value; render(); });
 centerLabelInput.addEventListener("input", () => { state.centerLabel = centerLabelInput.value; render(); });
@@ -211,6 +265,12 @@ boxShapeSelect.addEventListener("change", () => {
   render();
 });
 
+modeSeg.addEventListener("click", (e) => {
+  const btn = (e.target as Element).closest("button[data-mode]") as HTMLButtonElement | null;
+  if (!btn) return;
+  setMode(btn.dataset.mode as Mode);
+});
+
 document.querySelector<HTMLButtonElement>("#copy-png")!.addEventListener("click", copyPNG);
 document.querySelector<HTMLButtonElement>("#new-diagram")!.addEventListener("click", newDiagram);
 document.querySelector<HTMLButtonElement>("#box-delete")!.addEventListener("click", deleteSelected);
@@ -220,14 +280,23 @@ boxSublabelInput.addEventListener("input", updateSelectedFromInputs);
 document.addEventListener("keydown", (e) => {
   const active = document.activeElement;
   const typing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
-  if (!typing && (e.key === "Backspace" || e.key === "Delete") && selectedId) {
-    e.preventDefault();
-    deleteSelected();
+  if (!typing && (e.key === "Backspace" || e.key === "Delete")) {
+    if (selectedId) {
+      e.preventDefault();
+      deleteSelected();
+    } else if (selectedConnectorId) {
+      e.preventDefault();
+      deleteSelectedConnector();
+    }
   }
   if (e.key === "Escape") {
     if (active instanceof HTMLElement) active.blur();
-    if (selectedId) {
+    if (connectFrom !== null) {
+      connectFrom = null;
+      render();
+    } else if (selectedId !== null || selectedConnectorId !== null) {
       selectedId = null;
+      selectedConnectorId = null;
       render();
     }
   }
@@ -237,11 +306,14 @@ window.addEventListener("hashchange", () => {
   const fromHash = decodeStateFromHash();
   if (!fromHash) return;
   Object.assign(state, fromHash);
+  normalizeState();
   themeInput.value = state.theme;
   centerLabelInput.value = state.centerLabel;
   centerSublabelInput.value = state.centerSublabel;
   bgSelect.value = state.background;
   selectedId = null;
+  selectedConnectorId = null;
+  connectFrom = null;
   render();
 });
 
@@ -281,6 +353,29 @@ function rectsOverlap(
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
+function findEndpoint(id: string): { x: number; y: number; w: number; h: number } | null {
+  if (id === CENTER_ID) {
+    return { x: CENTER_X, y: CENTER_Y, w: CENTER_W, h: CENTER_H };
+  }
+  const box = state.boxes.find((b) => b.id === id);
+  if (!box) return null;
+  return { x: box.x, y: box.y, w: box.w, h: box.h };
+}
+
+function rectBoundary(r: { x: number; y: number; w: number; h: number }, toX: number, toY: number): { x: number; y: number } {
+  const cx = r.x + r.w / 2;
+  const cy = r.y + r.h / 2;
+  const dx = toX - cx;
+  const dy = toY - cy;
+  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+  const halfW = r.w / 2;
+  const halfH = r.h / 2;
+  const tx = dx === 0 ? Infinity : halfW / Math.abs(dx);
+  const ty = dy === 0 ? Infinity : halfH / Math.abs(dy);
+  const t = Math.min(tx, ty);
+  return { x: cx + t * dx, y: cy + t * dy };
+}
+
 // ---------------- Render ----------------
 
 function render(): void {
@@ -293,8 +388,11 @@ function render(): void {
 
 function buildSVG(): string {
   const themeStr = state.theme ? `theme:  ${esc(state.theme)}` : "";
+  const centerConnectSource = currentMode === "connect" && connectFrom === CENTER_ID;
+  const centerStroke = centerConnectSource ? "#10b981" : "#2a2a28";
+  const centerDash = centerConnectSource ? ` stroke-dasharray="6 4"` : "";
   return `
-<svg id="svg-root" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}" width="${CANVAS_W}" height="${CANVAS_H}">
+<svg id="svg-root" class="mode-${currentMode}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}" width="${CANVAS_W}" height="${CANVAS_H}">
   <style>
     .axis { font: 600 12px Arial, Helvetica, sans-serif; letter-spacing: 4px; fill: #8a8678; }
     .theme-line { font: 13px Arial, Helvetica, sans-serif; fill: #6b685f; letter-spacing: 0.5px; }
@@ -303,6 +401,14 @@ function buildSVG(): string {
     .box-label { font: 600 14px Arial, Helvetica, sans-serif; fill: #2a2a28; }
     .box-sublabel { font: 12px Arial, Helvetica, sans-serif; fill: #6b685f; }
   </style>
+  <defs>
+    <marker id="arrow" viewBox="-10 -5 10 10" refX="0" refY="0" markerWidth="10" markerHeight="10" orient="auto">
+      <path d="M-10,-5 L0,0 L-10,5 Z" fill="#54524c"/>
+    </marker>
+    <marker id="arrow-sel" viewBox="-10 -5 10 10" refX="0" refY="0" markerWidth="10" markerHeight="10" orient="auto">
+      <path d="M-10,-5 L0,0 L-10,5 Z" fill="#3b82f6"/>
+    </marker>
+  </defs>
 
   ${renderBackground()}
 
@@ -319,9 +425,11 @@ function buildSVG(): string {
 
   <text class="theme-line" x="${PAD}" y="${PAD - 56}">${themeStr}</text>
 
-  <g class="center" data-target="center">
+  ${state.connectors.map(renderConnector).filter(Boolean).join("\n")}
+
+  <g class="center" data-target="center" data-id="${CENTER_ID}">
     <rect x="${CENTER_X}" y="${CENTER_Y}" width="${CENTER_W}" height="${CENTER_H}"
-          fill="#ffffff" stroke="#2a2a28" stroke-width="2.5" rx="8"/>
+          fill="#ffffff" stroke="${centerStroke}" stroke-width="2.5" rx="8"${centerDash}/>
     <text class="center-label" x="${CENTER_X + CENTER_W / 2}"
           y="${CENTER_Y + CENTER_H / 2 - (state.centerSublabel ? 10 : 0)}"
           text-anchor="middle" dominant-baseline="middle">${esc(state.centerLabel)}</text>
@@ -374,10 +482,11 @@ function renderBackground(): string {
 
 function renderBox(b: Box): string {
   const sel = b.id === selectedId;
-  const stroke = sel ? "#3b82f6" : "#54524c";
+  const isConnectSource = currentMode === "connect" && connectFrom === b.id;
+  const stroke = sel ? "#3b82f6" : isConnectSource ? "#10b981" : "#54524c";
   const sw = sel ? 2.5 : 1.5;
-  return `<g class="box" data-id="${b.id}" style="cursor: ${sel ? "grabbing" : "grab"}">
-    ${renderShape(b, "#ffffff", stroke, sw)}
+  return `<g class="box" data-id="${b.id}">
+    ${renderShape(b, "#ffffff", stroke, sw, isConnectSource)}
     <text class="box-label" x="${b.x + b.w / 2}"
           y="${b.y + b.h / 2 - (b.sublabel ? 8 : 0)}"
           text-anchor="middle" dominant-baseline="middle">${esc(b.label)}</text>
@@ -388,9 +497,10 @@ function renderBox(b: Box): string {
   </g>`;
 }
 
-function renderShape(b: Box, fill: string, stroke: string, sw: number): string {
+function renderShape(b: Box, fill: string, stroke: string, sw: number, dashed = false): string {
   const { x, y, w, h } = b;
-  const a = `fill="${fill}" stroke="${stroke}" stroke-width="${sw}"`;
+  const dash = dashed ? ` stroke-dasharray="6 4"` : "";
+  const a = `fill="${fill}" stroke="${stroke}" stroke-width="${sw}"${dash}`;
   switch (b.shape) {
     case "rect":
       return `<rect x="${x}" y="${y}" width="${w}" height="${h}" ${a}/>`;
@@ -423,6 +533,26 @@ function renderShape(b: Box, fill: string, stroke: string, sw: number): string {
   }
 }
 
+function renderConnector(c: Connector): string {
+  const from = findEndpoint(c.from);
+  const to = findEndpoint(c.to);
+  if (!from || !to) return "";
+  const fromCx = from.x + from.w / 2;
+  const fromCy = from.y + from.h / 2;
+  const toCx = to.x + to.w / 2;
+  const toCy = to.y + to.h / 2;
+  const start = rectBoundary(from, toCx, toCy);
+  const end = rectBoundary(to, fromCx, fromCy);
+  const sel = c.id === selectedConnectorId;
+  const stroke = sel ? "#3b82f6" : "#54524c";
+  const sw = sel ? 2 : 1.5;
+  const marker = sel ? "arrow-sel" : "arrow";
+  return `<g class="connector" data-id="${c.id}">
+    <line x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="transparent" stroke-width="14" pointer-events="stroke"/>
+    <line x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="${stroke}" stroke-width="${sw}" marker-end="url(#${marker})" pointer-events="none"/>
+  </g>`;
+}
+
 // ---------------- Pointer interactions ----------------
 
 function bindCanvasEvents(): void {
@@ -446,12 +576,46 @@ function onMouseDown(e: MouseEvent): void {
   const { x, y } = svgPoint(svgEl, e);
   const target = e.target as Element;
   const boxGroup = target.closest("g.box") as SVGGElement | null;
+  const connectorGroup = target.closest("g.connector") as SVGGElement | null;
+  const centerGroup = target.closest("g.center") as SVGGElement | null;
 
+  // View mode: no canvas interactions
+  if (currentMode === "view") {
+    return;
+  }
+
+  // Connect mode: clicks only place / select connectors
+  if (currentMode === "connect") {
+    if (boxGroup) {
+      handleConnectClick(boxGroup.dataset.id!);
+      return;
+    }
+    if (centerGroup) {
+      handleConnectClick(CENTER_ID);
+      return;
+    }
+    if (connectorGroup) {
+      selectedConnectorId = connectorGroup.dataset.id!;
+      connectFrom = null;
+      render();
+      return;
+    }
+    // empty click cancels in-progress / selection
+    if (connectFrom !== null || selectedConnectorId !== null) {
+      connectFrom = null;
+      selectedConnectorId = null;
+      render();
+    }
+    return;
+  }
+
+  // Author mode (default editing behavior)
   if (boxGroup) {
     const id = boxGroup.dataset.id!;
     const box = state.boxes.find((b) => b.id === id);
     if (!box) return;
     selectedId = id;
+    selectedConnectorId = null;
     dragState = { id, offsetX: x - box.x, offsetY: y - box.y, moved: false };
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
@@ -461,8 +625,16 @@ function onMouseDown(e: MouseEvent): void {
     return;
   }
 
-  if (target.closest("g.center")) {
+  if (connectorGroup) {
+    selectedConnectorId = connectorGroup.dataset.id!;
     selectedId = null;
+    render();
+    return;
+  }
+
+  if (centerGroup) {
+    selectedId = null;
+    selectedConnectorId = null;
     render();
     centerLabelInput.focus();
     centerLabelInput.select();
@@ -471,6 +643,7 @@ function onMouseDown(e: MouseEvent): void {
 
   if (!isInFrame(x, y) || isInCenter(x, y)) {
     selectedId = null;
+    selectedConnectorId = null;
     render();
     return;
   }
@@ -487,16 +660,28 @@ function onMouseDown(e: MouseEvent): void {
   };
   clampToFrame(newBox);
 
-  // Refuse spawn if it would overlap the center; nudge to nearest side instead.
   if (rectsOverlap(newBox, { x: CENTER_X, y: CENTER_Y, w: CENTER_W, h: CENTER_H })) {
     return;
   }
 
   state.boxes.push(newBox);
   selectedId = newBox.id;
+  selectedConnectorId = null;
   render();
   boxLabelInput.focus();
   boxLabelInput.select();
+}
+
+function handleConnectClick(id: string): void {
+  if (connectFrom === null) {
+    connectFrom = id;
+  } else if (connectFrom === id) {
+    connectFrom = null;
+  } else {
+    state.connectors.push({ id: uid(), from: connectFrom, to: id });
+    connectFrom = null;
+  }
+  render();
 }
 
 function onMouseMove(e: MouseEvent): void {
@@ -521,7 +706,7 @@ function onMouseUp(): void {
 // ---------------- Inspector ----------------
 
 function syncInspector(): void {
-  if (!selectedId) {
+  if (currentMode !== "author" || !selectedId) {
     inspector.hidden = true;
     return;
   }
@@ -547,18 +732,30 @@ function updateSelectedFromInputs(): void {
 
 function deleteSelected(): void {
   if (!selectedId) return;
-  state.boxes = state.boxes.filter((b) => b.id !== selectedId);
+  const id = selectedId;
+  state.boxes = state.boxes.filter((b) => b.id !== id);
+  state.connectors = state.connectors.filter((c) => c.from !== id && c.to !== id);
   selectedId = null;
   render();
 }
 
+function deleteSelectedConnector(): void {
+  if (!selectedConnectorId) return;
+  state.connectors = state.connectors.filter((c) => c.id !== selectedConnectorId);
+  selectedConnectorId = null;
+  render();
+}
+
 function newDiagram(): void {
-  if (state.boxes.length > 0 && !confirm("Discard current diagram?")) return;
+  if ((state.boxes.length > 0 || state.connectors.length > 0) && !confirm("Discard current diagram?")) return;
   state.theme = "perspective";
   state.centerLabel = "the system";
   state.centerSublabel = "";
   state.boxes = [];
+  state.connectors = [];
   selectedId = null;
+  selectedConnectorId = null;
+  connectFrom = null;
   themeInput.value = state.theme;
   centerLabelInput.value = state.centerLabel;
   centerSublabelInput.value = state.centerSublabel;
@@ -570,11 +767,17 @@ function newDiagram(): void {
 async function copyPNG(): Promise<void> {
   // Capture XML synchronously inside the user gesture. Hide selection from export.
   const prevSelected = selectedId;
+  const prevSelectedConnector = selectedConnectorId;
+  const prevConnectFrom = connectFrom;
   selectedId = null;
+  selectedConnectorId = null;
+  connectFrom = null;
   render();
   const exportSvg = document.querySelector<SVGSVGElement>("#svg-root")!;
   const xml = new XMLSerializer().serializeToString(exportSvg);
   selectedId = prevSelected;
+  selectedConnectorId = prevSelectedConnector;
+  connectFrom = prevConnectFrom;
 
   // Build the PNG blob lazily; the gesture grant survives a Promise<Blob> in ClipboardItem.
   const pngPromise: Promise<Blob> = (async () => {
@@ -623,4 +826,5 @@ function flash(msg: string, isError = false): void {
 
 // ---------------- Boot ----------------
 
+updateModeUI();
 render();

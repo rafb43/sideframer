@@ -18,9 +18,12 @@ Minimum valid diagram:
   "centerLabel": "the system",
   "centerSublabel": "",
   "background": "grid",
-  "boxes": []
+  "boxes": [],
+  "connectors": []
 }
 ```
+
+`connectors` is optional. Each connector is `{ id, from, to }` where `from`/`to` are either box IDs from `boxes[]` or the special string `"@center"` to anchor at the central square. Arrows point from `from` to `to`. In v1 connectors are positional flourishes — the diagram's primary semantics still live in box placement.
 
 ## Step 3 — encode to URL
 

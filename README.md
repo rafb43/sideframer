@@ -21,6 +21,8 @@ Open http://localhost:5173.
 - [x] Copy PNG to clipboard
 - [x] Persist working draft to `localStorage`
 - [x] Share via URL fragment (`#d=<base64url-of-JSON>`) — hash beats localStorage on load
+- [x] Three modes — **view** (read-only), **author** (edit boxes), **connect** (place arrows)
+- [x] Connectors between boxes (and to/from the center) with arrow markers showing flow direction
 - [ ] Save diagram as B3nd URI + payload (next round)
 - [ ] Load diagram from B3nd URI (next round)
 
@@ -52,6 +54,9 @@ A diagram is a JSON object:
       "shape": "rounded",
       "x": 150, "y": 380, "w": 170, "h": 64
     }
+  ],
+  "connectors": [
+    { "id": "c1", "from": "in1", "to": "@center" }
   ]
 }
 ```
@@ -66,6 +71,7 @@ A diagram is a JSON object:
 | `background`      | `clean` \| `grid` \| `sections` \| `diagonals` \| `gradient`                  |
 | `boxes[].shape`   | `rect` \| `rounded` \| `document` \| `subprocess` \| `database` \| `server` \| `cloud` |
 | `boxes[].x,y,w,h` | absolute coordinates in a 1280 × 800 viewBox                                  |
+| `connectors[]`    | optional. Each: `{ id, from, to }`. `from`/`to` are box IDs, or `"@center"` for the central square. |
 
 ### Coordinate guide
 
