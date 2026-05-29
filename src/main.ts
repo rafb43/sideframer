@@ -227,7 +227,7 @@ bgSelect.value = state.background;
 
 const HINTS: Record<Mode, string> = {
   view: "view mode — read-only · press  a  (author)  or  c  (connect)",
-  author: "click to add a box · drag to move · select then edit  ·  esc / a / c switch modes",
+  author: "double-click empty canvas to add a box · drag to move · single click deselects  ·  esc / a / c switch modes",
   connect: "click two boxes (or the center) to connect them · arrow = flow  ·  esc / a / c switch modes",
 };
 
@@ -575,6 +575,7 @@ function renderConnector(c: Connector): string {
 function bindCanvasEvents(): void {
   const svgEl = document.querySelector<SVGSVGElement>("#svg-root")!;
   svgEl.addEventListener("mousedown", onMouseDown);
+  svgEl.addEventListener("dblclick", onDoubleClick);
 }
 
 function svgPoint(svg: SVGSVGElement, evt: MouseEvent): { x: number; y: number } {
@@ -666,12 +667,21 @@ function onMouseDown(e: MouseEvent): void {
     return;
   }
 
-  if (!isInFrame(x, y) || isInCenter(x, y)) {
-    selectedId = null;
-    selectedConnectorId = null;
-    render();
-    return;
-  }
+  // Single click on empty canvas just deselects.
+  // Double-click adds a new box (see onDoubleClick).
+  selectedId = null;
+  selectedConnectorId = null;
+  render();
+}
+
+function onDoubleClick(e: MouseEvent): void {
+  if (currentMode !== "author") return;
+  const svgEl = e.currentTarget as SVGSVGElement;
+  const { x, y } = svgPoint(svgEl, e);
+  const target = e.target as Element;
+  // Don't spawn on top of existing artifacts.
+  if (target.closest("g.box") || target.closest("g.center") || target.closest("g.connector")) return;
+  if (!isInFrame(x, y) || isInCenter(x, y)) return;
 
   const newBox: Box = {
     id: uid(),
@@ -684,10 +694,7 @@ function onMouseDown(e: MouseEvent): void {
     h: DEFAULT_BOX_H,
   };
   clampToFrame(newBox);
-
-  if (rectsOverlap(newBox, { x: CENTER_X, y: CENTER_Y, w: CENTER_W, h: CENTER_H })) {
-    return;
-  }
+  if (rectsOverlap(newBox, { x: CENTER_X, y: CENTER_Y, w: CENTER_W, h: CENTER_H })) return;
 
   state.boxes.push(newBox);
   selectedId = newBox.id;
