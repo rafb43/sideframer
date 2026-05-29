@@ -11,6 +11,8 @@ type Shape =
   | "server"
   | "cloud";
 
+const SHAPES: Shape[] = ["rect", "rounded", "document", "subprocess", "database", "server", "cloud"];
+
 interface Box {
   id: string;
   label: string;
@@ -183,29 +185,22 @@ app.innerHTML = `
     <div id="canvas"></div>
   </main>
   <aside class="inspector" id="inspector" hidden>
-    <div class="inspector-row">
-      <label class="field">
-        <span>selected box · label</span>
-        <input id="box-label-input" type="text" />
-      </label>
-      <label class="field">
-        <span>sublabel</span>
-        <input id="box-sublabel-input" type="text" />
-      </label>
-      <label class="field">
-        <span>shape</span>
-        <select id="box-shape-select">
-          <option value="rect">rectangle</option>
-          <option value="rounded">rounded</option>
-          <option value="document">document</option>
-          <option value="subprocess">subprocess</option>
-          <option value="database">database</option>
-          <option value="server">server</option>
-          <option value="cloud">cloud</option>
-        </select>
-      </label>
-      <div class="spacer"></div>
-      <button id="box-delete" class="btn danger">delete box</button>
+    <label class="field">
+      <span>label</span>
+      <input id="box-label-input" type="text" />
+    </label>
+    <label class="field">
+      <span>sublabel</span>
+      <input id="box-sublabel-input" type="text" />
+    </label>
+    <div class="field">
+      <span>shape</span>
+      <div class="shape-grid" id="shape-grid">
+        ${SHAPES.map((s) => `<button type="button" data-shape="${s}" title="${s}">${shapeIconSvg(s)}</button>`).join("")}
+      </div>
+    </div>
+    <div class="inspector-footer">
+      <button id="box-delete" class="btn danger">delete</button>
     </div>
   </aside>
 `;
@@ -218,7 +213,7 @@ const centerSublabelInput = document.querySelector<HTMLInputElement>("#center-su
 const boxLabelInput = document.querySelector<HTMLInputElement>("#box-label-input")!;
 const boxSublabelInput = document.querySelector<HTMLInputElement>("#box-sublabel-input")!;
 const bgSelect = document.querySelector<HTMLSelectElement>("#bg-select")!;
-const boxShapeSelect = document.querySelector<HTMLSelectElement>("#box-shape-select")!;
+const shapeGrid = document.querySelector<HTMLDivElement>("#shape-grid")!;
 const modeSeg = document.querySelector<HTMLDivElement>("#mode-seg")!;
 const hintSpan = document.querySelector<HTMLSpanElement>("#hint")!;
 
@@ -257,11 +252,12 @@ themeInput.addEventListener("input", () => { state.theme = themeInput.value; ren
 centerLabelInput.addEventListener("input", () => { state.centerLabel = centerLabelInput.value; render(); });
 centerSublabelInput.addEventListener("input", () => { state.centerSublabel = centerSublabelInput.value; render(); });
 bgSelect.addEventListener("change", () => { state.background = bgSelect.value as Background; render(); });
-boxShapeSelect.addEventListener("change", () => {
-  if (!selectedId) return;
+shapeGrid.addEventListener("click", (e) => {
+  const btn = (e.target as Element).closest("button[data-shape]") as HTMLButtonElement | null;
+  if (!btn || !selectedId) return;
   const box = state.boxes.find((b) => b.id === selectedId);
   if (!box) return;
-  box.shape = boxShapeSelect.value as Shape;
+  box.shape = btn.dataset.shape as Shape;
   render();
 });
 
@@ -517,24 +513,35 @@ function renderShape(b: Box, fill: string, stroke: string, sw: number, dashed = 
         <line x1="${x + 8}" y1="${y}" x2="${x + 8}" y2="${y + h}" stroke="${stroke}" stroke-width="${sw}"/>
         <line x1="${x + w - 8}" y1="${y}" x2="${x + w - 8}" y2="${y + h}" stroke="${stroke}" stroke-width="${sw}"/>`;
     case "database": {
-      const eh = 10;
+      const eh = Math.min(10, Math.max(3, h * 0.2));
       return `<path d="M ${x},${y + eh} L ${x},${y + h - eh} C ${x},${y + h + eh * 0.5} ${x + w},${y + h + eh * 0.5} ${x + w},${y + h - eh} L ${x + w},${y + eh} Z" ${a}/>
         <ellipse cx="${x + w / 2}" cy="${y + eh}" rx="${w / 2}" ry="${eh}" ${a}/>`;
     }
-    case "server":
+    case "server": {
+      const sOff = Math.min(13, Math.max(4, h * 0.22));
+      const cOff = Math.min(7, Math.max(3, h * 0.12));
       return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" ${a}/>
-        <line x1="${x}" y1="${y + 13}" x2="${x + w}" y2="${y + 13}" stroke="${stroke}" stroke-width="${sw}" opacity="0.5"/>
-        <line x1="${x}" y1="${y + h - 13}" x2="${x + w}" y2="${y + h - 13}" stroke="${stroke}" stroke-width="${sw}" opacity="0.5"/>
-        <circle cx="${x + w - 10}" cy="${y + 7}" r="1.5" fill="${stroke}"/>
-        <circle cx="${x + w - 16}" cy="${y + 7}" r="1.5" fill="${stroke}"/>
-        <circle cx="${x + w - 10}" cy="${y + h - 7}" r="1.5" fill="${stroke}"/>
-        <circle cx="${x + w - 16}" cy="${y + h - 7}" r="1.5" fill="${stroke}"/>`;
+        <line x1="${x}" y1="${y + sOff}" x2="${x + w}" y2="${y + sOff}" stroke="${stroke}" stroke-width="${sw}" opacity="0.5"/>
+        <line x1="${x}" y1="${y + h - sOff}" x2="${x + w}" y2="${y + h - sOff}" stroke="${stroke}" stroke-width="${sw}" opacity="0.5"/>
+        <circle cx="${x + w - 10}" cy="${y + cOff}" r="1.5" fill="${stroke}"/>
+        <circle cx="${x + w - 16}" cy="${y + cOff}" r="1.5" fill="${stroke}"/>
+        <circle cx="${x + w - 10}" cy="${y + h - cOff}" r="1.5" fill="${stroke}"/>
+        <circle cx="${x + w - 16}" cy="${y + h - cOff}" r="1.5" fill="${stroke}"/>`;
+    }
     case "cloud": {
       const sx = w / 22;
       const sy = h / 15;
       return `<path transform="translate(${x - 1 * sx},${y - 4.5 * sy}) scale(${sx},${sy})" d="M2.25 15a4.5 4.5 0 0 0 4.5 4.5H18a3.75 3.75 0 0 0 1.332-7.257 3 3 0 0 0-3.758-3.848 5.25 5.25 0 0 0-10.233 2.33A4.502 4.502 0 0 0 2.25 15Z" ${a} vector-effect="non-scaling-stroke"/>`;
     }
   }
+}
+
+function shapeIconSvg(shape: Shape): string {
+  const iconBox: Box = {
+    id: "icon", label: "", sublabel: "", shape,
+    x: 6, y: 6, w: 60, h: 32,
+  };
+  return `<svg viewBox="0 0 72 44" width="72" height="44">${renderShape(iconBox, "white", "#54524c", 1.5)}</svg>`;
 }
 
 function renderConnector(c: Connector): string {
@@ -737,8 +744,43 @@ function syncInspector(): void {
   inspector.hidden = false;
   if (document.activeElement !== boxLabelInput) boxLabelInput.value = box.label;
   if (document.activeElement !== boxSublabelInput) boxSublabelInput.value = box.sublabel;
-  boxShapeSelect.value = box.shape;
+  shapeGrid.querySelectorAll("button[data-shape]").forEach((b) => {
+    const btn = b as HTMLButtonElement;
+    btn.classList.toggle("active", btn.dataset.shape === box.shape);
+  });
+  positionInspector();
 }
+
+const INSPECTOR_W = 280;
+const INSPECTOR_GAP = 12;
+
+function positionInspector(): void {
+  if (inspector.hidden || !selectedId) return;
+  const boxEl = document.querySelector(`g.box[data-id="${CSS.escape(selectedId)}"]`) as SVGGElement | null;
+  if (!boxEl) return;
+  const rect = boxEl.getBoundingClientRect();
+  const insRect = inspector.getBoundingClientRect();
+  const w = insRect.width || INSPECTOR_W;
+  const h = insRect.height || 260;
+
+  // Prefer right side of the box; flip to the left if off-screen.
+  let left = rect.right + INSPECTOR_GAP;
+  if (left + w > window.innerWidth - 16) {
+    left = rect.left - w - INSPECTOR_GAP;
+  }
+  if (left < 16) left = 16;
+  if (left + w > window.innerWidth - 16) left = window.innerWidth - w - 16;
+
+  let top = rect.top;
+  if (top + h > window.innerHeight - 16) top = window.innerHeight - h - 16;
+  if (top < 76) top = 76;
+
+  inspector.style.left = `${left}px`;
+  inspector.style.top = `${top}px`;
+}
+
+window.addEventListener("scroll", positionInspector, true);
+window.addEventListener("resize", positionInspector);
 
 function updateSelectedFromInputs(): void {
   if (!selectedId) return;

@@ -22,7 +22,7 @@ body { min-height: 100vh; }
 
 #app {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr;
   min-height: 100vh;
 }
 
@@ -171,15 +171,59 @@ body { min-height: 100vh; }
 }
 
 .inspector {
+  position: fixed;
+  width: 280px;
   background: var(--panel);
-  border-top: 1px solid var(--line);
-  padding: 12px 20px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px 14px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.inspector-row {
+.inspector .field input {
+  width: 100%;
+  min-width: 0;
+}
+
+.shape-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.shape-grid button {
+  font-family: inherit;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 5px;
+  cursor: pointer;
   display: flex;
-  align-items: flex-end;
-  gap: 16px;
+  align-items: center;
+  justify-content: center;
+}
+
+.shape-grid button.active {
+  border-color: var(--accent);
+  background: #eef4ff;
+}
+
+.shape-grid button:hover:not(.active) {
+  background: #f7f4ec;
+}
+
+.shape-grid svg {
+  display: block;
+  pointer-events: none;
+}
+
+.inspector-footer {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .flash {
