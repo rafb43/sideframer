@@ -9,9 +9,10 @@ type Shape =
   | "subprocess"
   | "database"
   | "server"
-  | "cloud";
+  | "cloud"
+  | "user";
 
-const SHAPES: Shape[] = ["rect", "rounded", "document", "subprocess", "database", "server", "cloud"];
+const SHAPES: Shape[] = ["rect", "rounded", "document", "subprocess", "database", "server", "cloud", "user"];
 
 interface Box {
   id: string;
@@ -538,6 +539,16 @@ function renderShape(b: Box, fill: string, stroke: string, sw: number, dashed = 
       const sx = w / 22;
       const sy = h / 15;
       return `<path transform="translate(${x - 1 * sx},${y - 4.5 * sy}) scale(${sx},${sy})" d="M2.25 15a4.5 4.5 0 0 0 4.5 4.5H18a3.75 3.75 0 0 0 1.332-7.257 3 3 0 0 0-3.758-3.848 5.25 5.25 0 0 0-10.233 2.33A4.502 4.502 0 0 0 2.25 15Z" ${a} vector-effect="non-scaling-stroke"/>`;
+    }
+    case "user": {
+      const cx = x + w / 2;
+      const headR = Math.min(h * 0.22, w * 0.18);
+      const headCy = y + headR + h * 0.06;
+      const bustTop = headCy + headR + Math.min(h * 0.08, 6);
+      const bustLeft = x + w * 0.18;
+      const bustRight = x + w - w * 0.18;
+      return `<circle cx="${cx}" cy="${headCy}" r="${headR}" ${a}/>
+        <path d="M ${bustLeft} ${y + h} C ${bustLeft} ${bustTop}, ${bustRight} ${bustTop}, ${bustRight} ${y + h} Z" ${a}/>`;
     }
   }
 }

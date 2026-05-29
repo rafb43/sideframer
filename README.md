@@ -69,7 +69,7 @@ A diagram is a JSON object:
 | `centerLabel`     | freeform string                                                               |
 | `centerSublabel`  | freeform string (may be empty)                                                |
 | `background`      | `clean` \| `grid` \| `sections` \| `diagonals` \| `gradient`                  |
-| `boxes[].shape`   | `rect` \| `rounded` \| `document` \| `subprocess` \| `database` \| `server` \| `cloud` |
+| `boxes[].shape`   | `rect` \| `rounded` \| `document` \| `subprocess` \| `database` \| `server` \| `cloud` \| `user` |
 | `boxes[].x,y,w,h` | absolute coordinates in a 1600 × 1000 viewBox                                 |
 | `connectors[]`    | optional. Each: `{ id, from, to }`. `from`/`to` are box IDs, or `"@center"` for the central square. |
 
