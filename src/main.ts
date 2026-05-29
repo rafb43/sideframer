@@ -572,6 +572,14 @@ function svgPoint(svg: SVGSVGElement, evt: MouseEvent): { x: number; y: number }
 }
 
 function onMouseDown(e: MouseEvent): void {
+  // Blur any focused toolbar/inspector input so keyboard shortcuts (Delete,
+  // Backspace, Escape) hit the canvas-aware handler instead of being absorbed
+  // by an input. Author-mode paths below will re-focus the box label input
+  // when appropriate.
+  if (document.activeElement instanceof HTMLElement) {
+    document.activeElement.blur();
+  }
+
   const svgEl = e.currentTarget as SVGSVGElement;
   const { x, y } = svgPoint(svgEl, e);
   const target = e.target as Element;
