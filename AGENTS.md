@@ -39,6 +39,8 @@ The script prints a single URL to stdout.
 
 The user opens it in a running sideframer (`npm run dev`) and the diagram appears, ready to edit, export, or re-share. The fragment carries the whole diagram — no server needed.
 
+**Always open the URL for the user.** When an agent is asked for an example, image, diagram, or any shareable link as part of the deliverable, run `open <url>` (macOS) / `xdg-open <url>` (Linux) so it appears in the browser immediately. Print the URL in the reply too, but don't make the user copy-paste to see what was produced.
+
 ## Things to watch for
 
 - **State the theme.** Don't infer "the perspective" silently. The right-side output is theme-relative; without a theme, the diagram is ambiguous.
