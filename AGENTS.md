@@ -49,6 +49,56 @@ The user opens it in a running sideframer (`npm run dev`) and the diagram appear
 - **`id` must be unique within `boxes[]`.** Short strings are fine (`"i1"`, `"o1"`, etc.).
 - **Stay inside the frame.** `x` in `[96, 1512 − w]`, `y` in `[96, 912 − h]`. The app will clamp; better to send valid values.
 
+## Composition guidelines
+
+The placement principle decides *where* things go. These guidelines describe *what to put in each quadrant*. Don't drop a single box per side — favor a chain that names both the producing/receiving process and the payload entity. A diagram that reads `input: form submit` tells you nothing past position. A diagram that reads `UserApp (subprocess) → CheckoutRequest (document) → @center` tells you the entrypoint, gives the payload a searchable name, and reifies the producer so follow-up questions have somewhere to land.
+
+### Input (left) — minimum 2 steps
+
+```
+subprocess (producer)  →  document (payload entity)  →  @center
+```
+
+The `subprocess` names *who* sent it — a user app, a scheduler, an upstream service, a cron. The `document` names *what arrived on the wire* — the message type, the request body shape, the event name.
+
+### Dependencies (top) — config OR live-call chain
+
+There are two flavors. Pick the one that matches reality:
+
+**Static / preserved** (config blob, lookup table, pre-loaded resource):
+
+```
+document (the config / preserved data)  →  @center
+```
+
+**Live call** (a round trip to a service):
+
+```
+document (request)  →  subprocess (the service)  →  document (response)  →  @center
+```
+
+The two documents make explicit *what we ask for* and *what comes back*. Repeat the chain for each distinct dependency. Anchor every chain at the top of the center.
+
+### Output (right) — payload AND receiver
+
+```
+@center  →  document (output payload)  →  subprocess (receiver)
+```
+
+The receiver might be the same process that initiated the request (a round trip back), or a different downstream consumer. Name it explicitly so the diagram answers "who acts on this?".
+
+### Side effects (bottom) — same shape as live dependencies, pointed out
+
+```
+@center  →  document (payload that goes out)  →  subprocess | database | server | cloud (receiver)
+```
+
+Match the receiver shape to what the thing actually is — `database` for a store, `server` for an upstream service, `subprocess` for an internal handler, `cloud` when it fans out somewhere external. Each side-effect chain starts from the center.
+
+### Why these chains
+
+The chains turn each quadrant from a single noisy label into a tiny story: *who produced this, what entity is on the wire, who consumes it.* That is the information a reader of the diagram is trying to extract. Build the chains.
+
 ## Verifying
 
 Round-trip your output to make sure it's well-formed:
