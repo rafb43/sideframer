@@ -545,9 +545,9 @@ function renderShape(b: Box, fill: string, stroke: string, sw: number, dashed = 
 function shapeIconSvg(shape: Shape): string {
   const iconBox: Box = {
     id: "icon", label: "", sublabel: "", shape,
-    x: 6, y: 6, w: 60, h: 32,
+    x: 5, y: 5, w: 42, h: 22,
   };
-  return `<svg viewBox="0 0 72 44" width="72" height="44">${renderShape(iconBox, "white", "#54524c", 1.5)}</svg>`;
+  return `<svg viewBox="0 0 52 32" width="52" height="32">${renderShape(iconBox, "white", "#54524c", 1.2)}</svg>`;
 }
 
 function renderConnector(c: Connector): string {
@@ -764,8 +764,8 @@ function syncInspector(): void {
   positionInspector();
 }
 
-const INSPECTOR_W = 280;
-const INSPECTOR_GAP = 12;
+const INSPECTOR_W = 220;
+const INSPECTOR_GAP = 10;
 
 function positionInspector(): void {
   if (inspector.hidden || !selectedId) return;
