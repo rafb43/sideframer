@@ -185,6 +185,12 @@ app.innerHTML = `
     <div id="canvas"></div>
   </main>
   <aside class="inspector" id="inspector" hidden>
+    <div class="field">
+      <span>shape</span>
+      <div class="shape-grid" id="shape-grid">
+        ${SHAPES.map((s) => `<button type="button" data-shape="${s}" title="${s}">${shapeIconSvg(s)}</button>`).join("")}
+      </div>
+    </div>
     <label class="field">
       <span>label</span>
       <input id="box-label-input" type="text" />
@@ -193,12 +199,6 @@ app.innerHTML = `
       <span>sublabel</span>
       <input id="box-sublabel-input" type="text" />
     </label>
-    <div class="field">
-      <span>shape</span>
-      <div class="shape-grid" id="shape-grid">
-        ${SHAPES.map((s) => `<button type="button" data-shape="${s}" title="${s}">${shapeIconSvg(s)}</button>`).join("")}
-      </div>
-    </div>
     <div class="inspector-footer">
       <button id="box-delete" class="btn danger">delete</button>
     </div>

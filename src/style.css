@@ -184,6 +184,8 @@ body { min-height: 100vh; }
   gap: 10px;
 }
 
+.inspector[hidden] { display: none; }
+
 .inspector .field input {
   width: 100%;
   min-width: 0;
