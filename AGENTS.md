@@ -61,6 +61,14 @@ subprocess (producer)  →  document (payload entity)  →  @center
 
 The `subprocess` names *who* sent it — a user app, a scheduler, an upstream service, a cron. The `document` names *what arrived on the wire* — the message type, the request body shape, the event name.
 
+**Pre-scene configurations** — when the process is shaped by a configuration or input provided *before* the runtime scene, and that influence should be visible, depict it on the input side as a document flowing into the center:
+
+```
+document (config / preserved input)  →  @center
+```
+
+This is distinct from a static dependency at the top: a pre-scene input is *passed to* the center as part of its setup; a static dep is *read by* the center during operation. The same blob can belong to either side depending on which framing tells the better story.
+
 ### Dependencies (top) — center initiates, chains stack vertically
 
 The center is the *initiator* of every dependency. The first arrow goes from `@center` outward — to the request document for a live call, or to the document directly for a static dep. There is **no return arrow** from the chain back to `@center`: the dependency relationship is implicit in the chain pointing away from the center.
