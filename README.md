@@ -17,7 +17,7 @@ Open http://localhost:5173.
 - [x] Click empty space in the frame to add a box
 - [x] Drag boxes to reposition
 - [x] Edit selected box (label, sublabel) via the bottom inspector
-- [x] Theme + center label editing in the top toolbar
+- [x] Scene + center label editing in the top toolbar
 - [x] Copy PNG to clipboard
 - [x] Persist working draft to `localStorage`
 - [x] Share via URL fragment (`#d=<base64url-of-JSON>`) — hash beats localStorage on load
@@ -33,7 +33,7 @@ Vite + vanilla TypeScript + SVG. No framework.
 ## Conventions
 
 - The SVG `viewBox` is fixed at 1600 × 1000. Boxes use absolute coordinates inside that frame.
-- Theme is declared above the frame. Output (right) is theme-relative — see the spec.
+- Scene is declared above the frame. Output (right) is scene-relative — see the spec.
 - The grammar is positional: boxes have no edges/arrows in v1. Position carries semantics.
 
 ## Diagram schema
@@ -42,7 +42,7 @@ A diagram is a JSON object:
 
 ```json
 {
-  "theme": "checkout · fraud perspective",
+  "scene": "checkout · fraud perspective",
   "centerLabel": "checkout service",
   "centerSublabel": "",
   "background": "grid",
@@ -65,7 +65,7 @@ A diagram is a JSON object:
 
 | Field             | Values                                                                        |
 |-------------------|-------------------------------------------------------------------------------|
-| `theme`           | freeform string — the perspective being discussed                             |
+| `scene`           | freeform string — the perspective being discussed                             |
 | `centerLabel`     | freeform string                                                               |
 | `centerSublabel`  | freeform string (may be empty)                                                |
 | `background`      | `clean` \| `grid` \| `sections` \| `diagonals` \| `gradient`                  |

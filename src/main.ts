@@ -36,7 +36,7 @@ interface Connector {
 }
 
 interface DiagramState {
-  theme: string;
+  scene: string;
   centerLabel: string;
   centerSublabel: string;
   background: Background;
@@ -61,7 +61,7 @@ const DEFAULT_BOX_H = 64;
 // ---------------- State ----------------
 
 const state: DiagramState = {
-  theme: "perspective",
+  scene: "perspective",
   centerLabel: "the system",
   centerSublabel: "",
   background: "grid",
@@ -139,6 +139,9 @@ function writeStateToHash(): void {
 function normalizeState(): void {
   if (!Array.isArray(state.boxes)) state.boxes = [];
   if (!Array.isArray(state.connectors)) state.connectors = [];
+  const legacy = (state as unknown as { theme?: string }).theme;
+  if (typeof legacy === "string" && !state.scene) state.scene = legacy;
+  delete (state as unknown as { theme?: string }).theme;
 }
 
 // ---------------- DOM bootstrap ----------------
@@ -148,8 +151,8 @@ app.innerHTML = `
   <header class="toolbar">
     <div class="brand">sideframer</div>
     <label class="field">
-      <span>theme</span>
-      <input id="theme-input" type="text" />
+      <span>scene</span>
+      <input id="scene-input" type="text" />
     </label>
     <label class="field">
       <span>center label</span>
@@ -208,7 +211,7 @@ app.innerHTML = `
 
 const canvas = document.querySelector<HTMLDivElement>("#canvas")!;
 const inspector = document.querySelector<HTMLElement>("#inspector")!;
-const themeInput = document.querySelector<HTMLInputElement>("#theme-input")!;
+const sceneInput = document.querySelector<HTMLInputElement>("#scene-input")!;
 const centerLabelInput = document.querySelector<HTMLInputElement>("#center-label-input")!;
 const centerSublabelInput = document.querySelector<HTMLInputElement>("#center-sublabel-input")!;
 const boxLabelInput = document.querySelector<HTMLInputElement>("#box-label-input")!;
@@ -221,7 +224,7 @@ const hintSpan = document.querySelector<HTMLSpanElement>("#hint")!;
 Object.assign(state, decodeStateFromHash() ?? loadDraft() ?? {});
 normalizeState();
 
-themeInput.value = state.theme;
+sceneInput.value = state.scene;
 centerLabelInput.value = state.centerLabel;
 centerSublabelInput.value = state.centerSublabel;
 bgSelect.value = state.background;
@@ -255,7 +258,7 @@ function updateModeUI(): void {
   hintSpan.textContent = HINTS[currentMode];
 }
 
-themeInput.addEventListener("input", () => { state.theme = themeInput.value; render(); });
+sceneInput.addEventListener("input", () => { state.scene = sceneInput.value; render(); });
 centerLabelInput.addEventListener("input", () => { state.centerLabel = centerLabelInput.value; render(); });
 centerSublabelInput.addEventListener("input", () => { state.centerSublabel = centerSublabelInput.value; render(); });
 bgSelect.addEventListener("change", () => { state.background = bgSelect.value as Background; render(); });
@@ -314,7 +317,7 @@ window.addEventListener("hashchange", () => {
   if (!fromHash) return;
   Object.assign(state, fromHash);
   normalizeState();
-  themeInput.value = state.theme;
+  sceneInput.value = state.scene;
   centerLabelInput.value = state.centerLabel;
   centerSublabelInput.value = state.centerSublabel;
   bgSelect.value = state.background;
@@ -412,7 +415,7 @@ function render(): void {
 }
 
 function buildSVG(): string {
-  const themeStr = state.theme ? `theme:  ${esc(state.theme)}` : "";
+  const sceneStr = state.scene ? `scene:  ${esc(state.scene)}` : "";
   const centerConnectSource = currentMode === "connect" && connectFrom === CENTER_ID;
   const centerStroke = centerConnectSource ? "#10b981" : "#2a2a28";
   const centerDash = centerConnectSource ? ` stroke-dasharray="6 4"` : "";
@@ -420,7 +423,7 @@ function buildSVG(): string {
 <svg id="svg-root" class="mode-${currentMode}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}" width="${CANVAS_W}" height="${CANVAS_H}">
   <style>
     .axis { font: 600 12px Arial, Helvetica, sans-serif; letter-spacing: 4px; fill: #8a8678; }
-    .theme-line { font: 13px Arial, Helvetica, sans-serif; fill: #6b685f; letter-spacing: 0.5px; }
+    .scene-line { font: 13px Arial, Helvetica, sans-serif; fill: #6b685f; letter-spacing: 0.5px; }
     .center-label { font: 600 22px Arial, Helvetica, sans-serif; fill: #2a2a28; }
     .center-sublabel { font: 14px Arial, Helvetica, sans-serif; fill: #6b685f; }
     .box-label { font: 600 14px Arial, Helvetica, sans-serif; fill: #2a2a28; }
@@ -448,7 +451,7 @@ function buildSVG(): string {
   <text class="axis" x="${CANVAS_W - PAD + 38}" y="${CANVAS_H / 2}" text-anchor="middle"
         transform="rotate(90, ${CANVAS_W - PAD + 38}, ${CANVAS_H / 2})">OUTPUT</text>
 
-  <text class="theme-line" x="${PAD}" y="${PAD - 56}">${themeStr}</text>
+  <text class="scene-line" x="${PAD}" y="${PAD - 56}">${sceneStr}</text>
 
   ${state.connectors.map(renderConnector).filter(Boolean).join("\n")}
 
@@ -879,7 +882,7 @@ function deleteSelectedConnector(): void {
 
 function newDiagram(): void {
   if ((state.boxes.length > 0 || state.connectors.length > 0) && !confirm("Discard current diagram?")) return;
-  state.theme = "perspective";
+  state.scene = "perspective";
   state.centerLabel = "the system";
   state.centerSublabel = "";
   state.boxes = [];
@@ -887,7 +890,7 @@ function newDiagram(): void {
   selectedId = null;
   selectedConnectorId = null;
   connectFrom = null;
-  themeInput.value = state.theme;
+  sceneInput.value = state.scene;
   centerLabelInput.value = state.centerLabel;
   centerSublabelInput.value = state.centerSublabel;
   render();

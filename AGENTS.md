@@ -4,7 +4,7 @@ This repo includes a small CLI for producing sideframer diagram URLs from JSON, 
 
 ## Step 1 — read the method spec
 
-The diagramming method is **DFT** (Data Flow Topology). Read `../dft/SPEC.md` before composing anything. The grammar is positional: left=input, right=output (theme-relative), top=dependencies, bottom=side-effects, center=the thing.
+The diagramming method is **DFT** (Data Flow Topology). Read `../dft/SPEC.md` before composing anything. The grammar is positional: left=input, right=output (scene-relative), top=dependencies, bottom=side-effects, center=the thing.
 
 ## Step 2 — compose the JSON
 
@@ -14,7 +14,7 @@ Minimum valid diagram:
 
 ```json
 {
-  "theme": "the perspective you're drawing",
+  "scene": "the perspective you're drawing",
   "centerLabel": "the system",
   "centerSublabel": "",
   "background": "grid",
@@ -43,7 +43,7 @@ The user opens it in a running sideframer (`npm run dev`) and the diagram appear
 
 ## Things to watch for
 
-- **State the theme.** Don't infer "the perspective" silently. The right-side output is theme-relative; without a theme, the diagram is ambiguous.
+- **State the scene.** Don't infer "the perspective" silently. The right-side output is scene-relative; without a scene, the diagram is ambiguous.
 - **Side-effects are first-class.** If the system disturbs anything elsewhere, put it in the bottom quadrant. This is the most-forgotten quadrant.
 - **Position carries semantics.** Connectors exist (see schema), but the grammar is primarily positional — placement decides role.
 - **Don't overlap the center.** The central square is at `(620, 400)` to `(980, 600)`. Place all boxes outside this rectangle.

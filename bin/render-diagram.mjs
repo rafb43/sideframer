@@ -176,11 +176,11 @@ function renderBackground(state) {
 }
 
 function buildSVG(state) {
-  const themeStr = state.theme ? `theme:  ${esc(state.theme)}` : "";
+  const sceneStr = state.scene ? `scene:  ${esc(state.scene)}` : "";
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}" width="${CANVAS_W}" height="${CANVAS_H}">
   <style>
     .axis { font: 600 12px Arial, Helvetica, sans-serif; letter-spacing: 4px; fill: #8a8678; }
-    .theme-line { font: 13px Arial, Helvetica, sans-serif; fill: #6b685f; letter-spacing: 0.5px; }
+    .scene-line { font: 13px Arial, Helvetica, sans-serif; fill: #6b685f; letter-spacing: 0.5px; }
     .center-label { font: 600 22px Arial, Helvetica, sans-serif; fill: #2a2a28; }
     .center-sublabel { font: 14px Arial, Helvetica, sans-serif; fill: #6b685f; }
     .box-label { font: 600 14px Arial, Helvetica, sans-serif; fill: #2a2a28; }
@@ -203,7 +203,7 @@ function buildSVG(state) {
   <text class="axis" x="${CANVAS_W - PAD + 38}" y="${CANVAS_H / 2}" text-anchor="middle"
         transform="rotate(90, ${CANVAS_W - PAD + 38}, ${CANVAS_H / 2})">OUTPUT</text>
 
-  <text class="theme-line" x="${PAD}" y="${PAD - 56}">${themeStr}</text>
+  <text class="scene-line" x="${PAD}" y="${PAD - 56}">${sceneStr}</text>
 
   ${(state.connectors ?? []).map((c) => renderConnector(state, c)).filter(Boolean).join("\n  ")}
 
