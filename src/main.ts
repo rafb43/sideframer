@@ -676,10 +676,12 @@ function handleConnectClick(id: string): void {
   if (connectFrom === null) {
     connectFrom = id;
   } else if (connectFrom === id) {
+    // clicking the source again cancels
     connectFrom = null;
   } else {
     state.connectors.push({ id: uid(), from: connectFrom, to: id });
-    connectFrom = null;
+    // connectFrom stays set so the user can fan out from the same source
+    // to multiple targets. Empty-canvas click or Escape clears it.
   }
   render();
 }
