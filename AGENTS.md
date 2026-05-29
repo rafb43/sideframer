@@ -95,7 +95,9 @@ The receiver might be the same process that initiated the request (a round trip 
 @center  →  document (payload that goes out)  →  subprocess | database | server | cloud (receiver)
 ```
 
-Match the receiver shape to what the thing actually is — `database` for a store, `server` for an upstream service, `subprocess` for an internal handler, `cloud` when it fans out somewhere external. Each side-effect chain starts from the center.
+Match the receiver shape to what the thing actually is — `database` for a store, `server` for an upstream service, `subprocess` for an internal handler, `cloud` when it fans out somewhere external.
+
+**Stack each side effect as its own row below the center**, same as dependencies. Top-to-bottom = order of operation when relevant.
 
 ### Why these chains
 
