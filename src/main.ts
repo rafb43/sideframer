@@ -234,7 +234,13 @@ const HINTS: Record<Mode, string> = {
 function setMode(m: Mode): void {
   currentMode = m;
   connectFrom = null;
-  if (m !== "author") selectedId = null;
+  if (m !== "author") {
+    // Inspector edits boxes in author mode only. Leaving author discards
+    // the current box selection and hides the floating form immediately so
+    // there's no stale-position flash before the next render runs.
+    selectedId = null;
+    inspector.hidden = true;
+  }
   if (m === "view") selectedConnectorId = null;
   updateModeUI();
   render();
