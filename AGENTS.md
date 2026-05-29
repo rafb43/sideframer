@@ -43,11 +43,11 @@ The user opens it in a running sideframer (`npm run dev`) and the diagram appear
 
 - **State the theme.** Don't infer "the perspective" silently. The right-side output is theme-relative; without a theme, the diagram is ambiguous.
 - **Side-effects are first-class.** If the system disturbs anything elsewhere, put it in the bottom quadrant. This is the most-forgotten quadrant.
-- **Position carries semantics.** There are no connector arrows in v1. The grammar is positional, not graph-theoretic.
-- **Don't overlap the center.** The central square is at `(460, 300)` to `(820, 500)`. Place all boxes outside this rectangle.
+- **Position carries semantics.** Connectors exist (see schema), but the grammar is primarily positional — placement decides role.
+- **Don't overlap the center.** The central square is at `(620, 400)` to `(980, 600)`. Place all boxes outside this rectangle.
 - **Box default size is 170×64.** Stay close unless intentionally varying.
 - **`id` must be unique within `boxes[]`.** Short strings are fine (`"i1"`, `"o1"`, etc.).
-- **Stay inside the frame.** `x` in `[96, 1184 − w]`, `y` in `[96, 704 − h]`. The app will clamp; better to send valid values.
+- **Stay inside the frame.** `x` in `[96, 1512 − w]`, `y` in `[96, 912 − h]`. The app will clamp; better to send valid values.
 
 ## Verifying
 

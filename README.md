@@ -32,7 +32,7 @@ Vite + vanilla TypeScript + SVG. No framework.
 
 ## Conventions
 
-- The SVG `viewBox` is fixed at 1280 × 800. Boxes use absolute coordinates inside that frame.
+- The SVG `viewBox` is fixed at 1600 × 1000. Boxes use absolute coordinates inside that frame.
 - Theme is declared above the frame. Output (right) is theme-relative — see the spec.
 - The grammar is positional: boxes have no edges/arrows in v1. Position carries semantics.
 
@@ -70,21 +70,21 @@ A diagram is a JSON object:
 | `centerSublabel`  | freeform string (may be empty)                                                |
 | `background`      | `clean` \| `grid` \| `sections` \| `diagonals` \| `gradient`                  |
 | `boxes[].shape`   | `rect` \| `rounded` \| `document` \| `subprocess` \| `database` \| `server` \| `cloud` |
-| `boxes[].x,y,w,h` | absolute coordinates in a 1280 × 800 viewBox                                  |
+| `boxes[].x,y,w,h` | absolute coordinates in a 1600 × 1000 viewBox                                 |
 | `connectors[]`    | optional. Each: `{ id, from, to }`. `from`/`to` are box IDs, or `"@center"` for the central square. |
 
 ### Coordinate guide
 
-The canvas is 1280 × 800. The frame border spans `(88, 88)` to `(1192, 712)`. The central square is at `(460, 300)` to `(820, 500)`. Place boxes outside the center, inside the frame.
+The canvas is 1600 × 1000. The frame border spans `(88, 88)` to `(1512, 912)`. The central square is at `(620, 400)` to `(980, 600)`. Place boxes outside the center, inside the frame.
 
 Suggested quadrant bands for a default 170 × 64 box:
 
 | Quadrant              | x range       | y range       |
 |-----------------------|---------------|---------------|
-| Input (left)          | 100 — 290     | 100 — 640     |
-| Output (right)        | 820 — 1020    | 100 — 640     |
-| Dependencies (top)    | 100 — 1020    | 100 — 240     |
-| Side-effects (bottom) | 100 — 1020    | 500 — 640     |
+| Input (left)          | 100 — 450     | 100 — 836     |
+| Output (right)        | 980 — 1340    | 100 — 836     |
+| Dependencies (top)    | 100 — 1340    | 100 — 336     |
+| Side-effects (bottom) | 100 — 1340    | 600 — 836     |
 
 Position carries semantics. The placement principle: position should add information to the story being told.
 

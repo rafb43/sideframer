@@ -45,8 +45,8 @@ const CENTER_ID = "@center";
 
 // ---------------- Layout constants ----------------
 
-const CANVAS_W = 1280;
-const CANVAS_H = 800;
+const CANVAS_W = 1600;
+const CANVAS_H = 1000;
 const PAD = 88;
 const CENTER_W = 360;
 const CENTER_H = 200;
