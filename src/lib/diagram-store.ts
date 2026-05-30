@@ -1,9 +1,12 @@
 import { connection, Rig } from "@bandeira-tech/b3nd-core/rig";
 import { HttpClient } from "@bandeira-tech/b3nd-move/http/client";
-import { diagramUri, slugFromUri, sluggify } from "./sluggify.ts";
-
-const DIAGRAM_PATTERN = "mutable://diagrams/**";
-const LIST_URL = "mutable://diagrams/?fn=ls&format=uris";
+import {
+  DIAGRAM_PATTERN,
+  diagramUri,
+  LIST_LOCATOR,
+  slugFromUri,
+  sluggify,
+} from "./sluggify.ts";
 
 export interface DiagramRecord {
   uri: string;
@@ -83,7 +86,7 @@ export class DiagramStore {
   }
 
   async list(): Promise<{ uri: string; slug: string }[]> {
-    const [out] = await this.rig.read([LIST_URL]);
+    const [out] = await this.rig.read([LIST_LOCATOR]);
     if (!out || !Array.isArray(out[1])) return [];
     return (out[1] as string[]).map((uri) => ({
       uri,

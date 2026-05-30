@@ -14,32 +14,24 @@ import { homedir } from "node:os";
 import { connection, Rig } from "@bandeira-tech/b3nd-core/rig";
 import { httpApi } from "@bandeira-tech/b3nd-move/http/service";
 
+import {
+  DIAGRAM_PATTERN,
+  DIAGRAM_PREFIX,
+  filenameToUri,
+  parseLocator,
+  uriToFilename,
+} from "../src/lib/sluggify.ts";
+
 const PORT = Number(process.env.SIDEFRAMER_PORT) || 5174;
 const DATA_DIR = process.env.SIDEFRAMER_DATA || join(homedir(), ".sideframer", "diagrams");
 
 await mkdir(DATA_DIR, { recursive: true });
 
-const PREFIX = "mutable://diagrams/";
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
-function slugFromUri(uri) {
-  const noScheme = uri.replace(PREFIX, "");
-  // strip any query string the locator carries
-  return noScheme.split("?")[0];
-}
 function filePath(uri) {
-  return join(DATA_DIR, `${slugFromUri(uri)}.json`);
-}
-function parseLocator(url) {
-  const qIdx = url.indexOf("?");
-  const uri = qIdx === -1 ? url : url.slice(0, qIdx);
-  const params = new URLSearchParams(qIdx === -1 ? "" : url.slice(qIdx + 1));
-  return {
-    uri,
-    fn: params.get("fn") || "read",
-    format: params.get("format") || "full",
-  };
+  return join(DATA_DIR, uriToFilename(uri));
 }
 
 const diagramsClient = {
@@ -47,7 +39,7 @@ const diagramsClient = {
     const results = [];
     for (const [uri, payload] of msgs) {
       try {
-        if (!uri.startsWith(PREFIX)) throw new Error(`uri outside ${PREFIX}`);
+        if (!uri.startsWith(DIAGRAM_PREFIX)) throw new Error(`uri outside ${DIAGRAM_PREFIX}`);
         const bytes = payload instanceof Uint8Array
           ? payload
           : encoder.encode(JSON.stringify(payload));
@@ -73,8 +65,9 @@ const diagramsClient = {
         try {
           const dirents = await readdir(DATA_DIR, { withFileTypes: true });
           entries = dirents
-            .filter((e) => e.isFile() && e.name.endsWith(".json"))
-            .map((e) => `${PREFIX}${e.name.slice(0, -5)}`);
+            .filter((e) => e.isFile())
+            .map((e) => filenameToUri(e.name))
+            .filter((u) => u !== null);
         } catch (e) {
           if (e?.code !== "ENOENT") throw e;
         }
@@ -113,8 +106,8 @@ const diagramsClient = {
 
 const rig = new Rig({
   routes: {
-    receive: [connection(diagramsClient, [`${PREFIX}**`])],
-    read: [connection(diagramsClient, [`${PREFIX}**`])],
+    receive: [connection(diagramsClient, [DIAGRAM_PATTERN])],
+    read: [connection(diagramsClient, [DIAGRAM_PATTERN])],
   },
 });
 

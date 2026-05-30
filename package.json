@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "serve": "node server/server.mjs"
+    "serve": "node --experimental-strip-types --no-warnings server/server.mjs"
   },
   "dependencies": {
     "@bandeira-tech/b3nd-core": "file:../b3nd-core/npm",
