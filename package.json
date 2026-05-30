@@ -6,7 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "serve": "node server/server.mjs"
+  },
+  "dependencies": {
+    "@bandeira-tech/b3nd-core": "file:../b3nd-core/npm",
+    "@bandeira-tech/b3nd-move": "file:../b3nd-move/npm",
+    "@bandeira-tech/b3nd-save": "file:../b3nd-save/npm"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

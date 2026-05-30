@@ -6,10 +6,12 @@ Local web app for authoring DFT diagrams. See the [DFT spec](../dft/SPEC.md).
 
 ```
 npm install
-npm run dev
+npm run serve   # storage server on :5174 (b3nd-backed)
+npm run dev     # vite on :5173
 ```
 
-Open http://localhost:5173.
+Open http://localhost:5173. The **gallery** button in the toolbar lists every
+diagram saved to the storage server.
 
 ## v1 status
 
@@ -23,8 +25,8 @@ Open http://localhost:5173.
 - [x] Share via URL fragment (`#d=<base64url-of-JSON>`) — hash beats localStorage on load
 - [x] Three modes — **view** (read-only), **author** (edit boxes), **connect** (place arrows)
 - [x] Connectors between boxes (and to/from the center) with arrow markers showing flow direction
-- [ ] Save diagram as B3nd URI + payload (next round)
-- [ ] Load diagram from B3nd URI (next round)
+- [x] Save diagram to a b3nd-backed storage server (`mutable://diagrams/<slug>`)
+- [x] Gallery panel — list / load diagrams saved by the app **or** by an agent via CLI
 
 ## Stack
 
@@ -104,5 +106,18 @@ node bin/decode-diagram.mjs "http://localhost:5173/#d=..."
 ```
 
 The URL fragment carries the entire diagram — open it in a running sideframer to view, edit, export PNG, or re-share. The hash beats `localStorage` on bootstrap, so a freshly authored URL always shows what was authored.
+
+### Saving to the gallery
+
+```
+# JSON file → b3nd URI + load-in-app URL
+node bin/save-diagram.mjs diagram.json
+```
+
+The server (`npm run serve`) owns a b3nd `Rig` whose receive/read routes
+point at a tiny filesystem-resident PIN client storing each diagram as
+`~/.sideframer/diagrams/<slug>.json`. The browser and the CLI both talk to
+that server over HTTP (via `b3nd-move`'s `HttpClient`) — same rig, same
+URIs, same diagrams. Anything an agent saves shows up in your gallery.
 
 Agents (Claude Code etc.) authoring diagrams from natural-language requests should read [`AGENTS.md`](./AGENTS.md) first.

@@ -1,4 +1,9 @@
 import "./style.css";
+import { createClientRig, DiagramStore } from "./lib/diagram-store.ts";
+
+const STORAGE_SERVER = (import.meta as { env?: { VITE_SIDEFRAMER_SERVER?: string } }).env
+  ?.VITE_SIDEFRAMER_SERVER || "http://localhost:5174";
+const diagramStore = new DiagramStore(createClientRig(STORAGE_SERVER));
 
 // ---------------- Types ----------------
 
@@ -183,9 +188,22 @@ app.innerHTML = `
     <div class="spacer"></div>
     <span class="hint" id="hint"></span>
     <button id="copy-png" class="btn">copy PNG</button>
+    <button id="save-diagram" class="btn">save</button>
+    <button id="toggle-gallery" class="btn">gallery</button>
     <button id="new-diagram" class="btn">new</button>
   </header>
   <main class="canvas-wrap">
+    <aside class="gallery" id="gallery" hidden>
+      <div class="gallery-header">
+        <span>gallery</span>
+        <button id="gallery-refresh" class="btn-mini" title="refresh">↻</button>
+      </div>
+      <ul id="gallery-list" class="gallery-list"></ul>
+      <div class="gallery-empty" id="gallery-empty" hidden>
+        nothing saved yet — hit <kbd>save</kbd> on a diagram you like.
+      </div>
+      <div class="gallery-error" id="gallery-error" hidden></div>
+    </aside>
     <div id="canvas"></div>
   </main>
   <aside class="inspector" id="inspector" hidden>
@@ -312,10 +330,8 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-window.addEventListener("hashchange", () => {
-  const fromHash = decodeStateFromHash();
-  if (!fromHash) return;
-  Object.assign(state, fromHash);
+function loadDiagramState(newState: Partial<DiagramState>): void {
+  Object.assign(state, newState);
   normalizeState();
   sceneInput.value = state.scene;
   centerLabelInput.value = state.centerLabel;
@@ -325,7 +341,97 @@ window.addEventListener("hashchange", () => {
   selectedConnectorId = null;
   connectFrom = null;
   render();
+}
+
+window.addEventListener("hashchange", () => {
+  const fromHash = decodeStateFromHash();
+  if (!fromHash) return;
+  loadDiagramState(fromHash);
 });
+
+// ---------------- Gallery ----------------
+
+const galleryPanel = document.querySelector<HTMLElement>("#gallery")!;
+const galleryList = document.querySelector<HTMLUListElement>("#gallery-list")!;
+const galleryEmpty = document.querySelector<HTMLDivElement>("#gallery-empty")!;
+const galleryError = document.querySelector<HTMLDivElement>("#gallery-error")!;
+
+async function refreshGallery(): Promise<void> {
+  galleryError.hidden = true;
+  try {
+    const items = await diagramStore.list();
+    galleryList.innerHTML = "";
+    galleryEmpty.hidden = items.length > 0;
+    for (const { uri, slug } of items) {
+      const li = document.createElement("li");
+      li.className = "gallery-item";
+      li.dataset.uri = uri;
+      li.innerHTML = `<span class="g-slug">${esc(slug)}</span>`;
+      li.title = uri;
+      galleryList.appendChild(li);
+    }
+  } catch (e) {
+    galleryError.hidden = false;
+    galleryError.textContent =
+      `couldn't reach storage server (${STORAGE_SERVER}). is it running? — npm run serve`;
+    galleryList.innerHTML = "";
+    galleryEmpty.hidden = true;
+    console.warn("gallery refresh failed", e);
+  }
+}
+
+galleryList.addEventListener("click", async (e) => {
+  const li = (e.target as Element).closest("li.gallery-item") as HTMLLIElement | null;
+  if (!li || !li.dataset.uri) return;
+  try {
+    const rec = await diagramStore.load(li.dataset.uri);
+    if (rec) loadDiagramState(rec.diagram as Partial<DiagramState>);
+  } catch (err) {
+    console.warn("load failed", err);
+  }
+});
+
+document.querySelector<HTMLButtonElement>("#toggle-gallery")!
+  .addEventListener("click", () => {
+    galleryPanel.hidden = !galleryPanel.hidden;
+    if (!galleryPanel.hidden) refreshGallery();
+  });
+
+document.querySelector<HTMLButtonElement>("#gallery-refresh")!
+  .addEventListener("click", () => refreshGallery());
+
+document.querySelector<HTMLButtonElement>("#save-diagram")!
+  .addEventListener("click", async () => {
+    const btn = document.querySelector<HTMLButtonElement>("#save-diagram")!;
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "saving…";
+    try {
+      const rec = await diagramStore.save(state);
+      btn.textContent = `saved · ${rec.slug.slice(0, 24)}${rec.slug.length > 24 ? "…" : ""}`;
+      if (!galleryPanel.hidden) refreshGallery();
+    } catch (err) {
+      btn.textContent = "save failed";
+      console.warn("save failed", err);
+    }
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }, 1800);
+  });
+
+// Load-from-query on boot — agent-generated URLs use ?load=mutable://diagrams/...
+(async () => {
+  const params = new URLSearchParams(location.search);
+  const loadUri = params.get("load");
+  if (!loadUri) return;
+  try {
+    const rec = await diagramStore.load(loadUri);
+    if (rec) loadDiagramState(rec.diagram as Partial<DiagramState>);
+  } catch (err) {
+    console.warn(`load from ?load=${loadUri} failed`, err);
+  }
+})();
 
 // ---------------- Helpers ----------------
 

@@ -11,6 +11,8 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "useDefineForClassFields": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["src"]
