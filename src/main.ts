@@ -1,5 +1,6 @@
 import "./style.css";
 import { createClientRig, DiagramStore } from "./lib/diagram-store.ts";
+import { renderDesignSystem } from "./lib/design-system.ts";
 
 const STORAGE_SERVER = (import.meta as { env?: { VITE_SIDEFRAMER_SERVER?: string } }).env
   ?.VITE_SIDEFRAMER_SERVER || "http://localhost:5174";
@@ -32,7 +33,8 @@ interface Box {
 
 type Background = "clean" | "grid" | "sections" | "diagonals" | "gradient";
 
-type Mode = "view" | "author" | "connect";
+type Mode = "gallery" | "view" | "draw" | "connect";
+const MODES: Mode[] = ["gallery", "view", "draw", "connect"];
 
 interface Connector {
   id: string;
@@ -77,8 +79,26 @@ const state: DiagramState = {
 let selectedId: string | null = null;
 let selectedConnectorId: string | null = null;
 let dragState: { id: string; offsetX: number; offsetY: number; moved: boolean } | null = null;
-let currentMode: Mode = "author";
+let currentMode: Mode = "draw";
 let connectFrom: string | null = null;
+
+// DOM refs — assigned by bootDiagrammer()
+let shellEl!: HTMLElement;
+let canvas!: HTMLDivElement;
+let inspector!: HTMLElement;
+let sceneInput!: HTMLInputElement;
+let centerLabelInput!: HTMLInputElement;
+let centerSublabelInput!: HTMLInputElement;
+let boxLabelInput!: HTMLInputElement;
+let boxSublabelInput!: HTMLInputElement;
+let bgSelect!: HTMLSelectElement;
+let shapeGrid!: HTMLDivElement;
+let modeSeg!: HTMLDivElement;
+let hintSpan!: HTMLSpanElement;
+let galleryList!: HTMLUListElement;
+let galleryEmpty!: HTMLDivElement;
+let galleryError!: HTMLDivElement;
+let galleryCount!: HTMLSpanElement;
 
 // ---------------- Persistence ----------------
 
@@ -149,122 +169,186 @@ function normalizeState(): void {
   delete (state as unknown as { theme?: string }).theme;
 }
 
+const app = document.querySelector<HTMLDivElement>("#app")!;
+
 // ---------------- DOM bootstrap ----------------
 
-const app = document.querySelector<HTMLDivElement>("#app")!;
-app.innerHTML = `
-  <header class="toolbar">
-    <div class="brand">sideframer</div>
-    <label class="field">
-      <span>scene</span>
-      <input id="scene-input" type="text" />
-    </label>
-    <label class="field">
-      <span>center label</span>
-      <input id="center-label-input" type="text" />
-    </label>
-    <label class="field">
-      <span>center sublabel</span>
-      <input id="center-sublabel-input" type="text" />
-    </label>
-    <label class="field">
-      <span>background</span>
-      <select id="bg-select">
-        <option value="clean">clean</option>
-        <option value="grid">grid</option>
-        <option value="sections">sections</option>
-        <option value="diagonals">diagonals</option>
-        <option value="gradient">gradient</option>
-      </select>
-    </label>
-    <div class="field">
-      <span>mode</span>
-      <div class="segmented" id="mode-seg">
-        <button type="button" data-mode="view">view</button>
-        <button type="button" data-mode="author">author</button>
-        <button type="button" data-mode="connect">connect</button>
+function bootDiagrammer(): void {
+  app.innerHTML = `
+    <div id="shell" data-mode="draw">
+      <div class="message-bar" id="message-bar" hidden>
+        <span id="message-bar-text"></span>
+        <button type="button" class="msg-dismiss" id="message-bar-dismiss" title="dismiss">×</button>
+      </div>
+
+      <header class="masthead">
+        <div class="masthead-brand">sideframer</div>
+        <nav class="masthead-modes">
+          <div class="segmented" id="mode-seg" role="tablist" aria-label="mode">
+            ${MODES.map((m) => `<button type="button" data-mode="${m}">${m}</button>`).join("")}
+          </div>
+        </nav>
+        <div class="masthead-actions">
+          <button id="copy-png" class="btn">copy PNG</button>
+          <button id="save-diagram" class="btn">save</button>
+          <button id="new-diagram" class="btn">new</button>
+        </div>
+      </header>
+
+      <div class="shell-main">
+        <div class="context-actions" id="context-actions">
+          <div class="context-actions-group" data-mode="gallery">
+            <button id="gallery-refresh" class="btn-mini" title="refresh">↻ refresh</button>
+            <span class="ctx-note">click a tile to open it</span>
+          </div>
+          <div class="context-actions-group" data-mode="view">
+            <span class="ctx-note">read-only · press <kbd>d</kbd> to draw or <kbd>c</kbd> to connect</span>
+          </div>
+          <div class="context-actions-group" data-mode="draw">
+            <label class="field">
+              <span>scene</span>
+              <input id="scene-input" type="text" />
+            </label>
+            <label class="field">
+              <span>center label</span>
+              <input id="center-label-input" type="text" />
+            </label>
+            <label class="field">
+              <span>center sublabel</span>
+              <input id="center-sublabel-input" type="text" />
+            </label>
+            <label class="field">
+              <span>background</span>
+              <select id="bg-select">
+                <option value="clean">clean</option>
+                <option value="grid">grid</option>
+                <option value="sections">sections</option>
+                <option value="diagonals">diagonals</option>
+                <option value="gradient">gradient</option>
+              </select>
+            </label>
+          </div>
+          <div class="context-actions-group" data-mode="connect">
+            <span class="ctx-note">click two boxes (or the center) to connect · click an arrow to select</span>
+          </div>
+        </div>
+
+        <div class="mode-content" id="mode-content">
+          <aside id="gallery-pane">
+            <div class="gallery-pane-header">
+              <h2>gallery</h2>
+              <span class="gallery-count" id="gallery-count"></span>
+            </div>
+            <ul id="gallery-list" class="gallery-grid"></ul>
+            <div class="gallery-empty" id="gallery-empty" hidden>
+              nothing saved yet — hit <kbd>save</kbd> on a diagram you like.
+            </div>
+            <div class="gallery-error" id="gallery-error" hidden></div>
+          </aside>
+          <div id="canvas-pane">
+            <div id="canvas"></div>
+          </div>
+        </div>
+      </div>
+
+      <footer class="shell-footer">
+        <span class="hint" id="hint"></span>
+        <span class="footer-status" id="footer-status"></span>
+      </footer>
+
+      <div class="brand-footer">
+        sideframer · DFT diagrams · <a href="#design-system">components</a>
       </div>
     </div>
-    <div class="spacer"></div>
-    <span class="hint" id="hint"></span>
-    <button id="copy-png" class="btn">copy PNG</button>
-    <button id="save-diagram" class="btn">save</button>
-    <button id="toggle-gallery" class="btn">gallery</button>
-    <button id="new-diagram" class="btn">new</button>
-  </header>
-  <main class="canvas-wrap">
-    <aside class="gallery" id="gallery" hidden>
-      <div class="gallery-header">
-        <span>gallery</span>
-        <button id="gallery-refresh" class="btn-mini" title="refresh">↻</button>
+
+    <aside class="inspector" id="inspector" hidden>
+      <div class="field">
+        <span>shape</span>
+        <div class="shape-grid" id="shape-grid">
+          ${SHAPES.map((s) => `<button type="button" data-shape="${s}" title="${s}">${shapeIconSvg(s)}</button>`).join("")}
+        </div>
       </div>
-      <ul id="gallery-list" class="gallery-list"></ul>
-      <div class="gallery-empty" id="gallery-empty" hidden>
-        nothing saved yet — hit <kbd>save</kbd> on a diagram you like.
+      <label class="field">
+        <span>label</span>
+        <input id="box-label-input" type="text" />
+      </label>
+      <label class="field">
+        <span>sublabel</span>
+        <input id="box-sublabel-input" type="text" />
+      </label>
+      <div class="inspector-footer">
+        <button id="box-delete" class="btn danger">delete</button>
       </div>
-      <div class="gallery-error" id="gallery-error" hidden></div>
     </aside>
-    <div id="canvas"></div>
-  </main>
-  <aside class="inspector" id="inspector" hidden>
-    <div class="field">
-      <span>shape</span>
-      <div class="shape-grid" id="shape-grid">
-        ${SHAPES.map((s) => `<button type="button" data-shape="${s}" title="${s}">${shapeIconSvg(s)}</button>`).join("")}
-      </div>
-    </div>
-    <label class="field">
-      <span>label</span>
-      <input id="box-label-input" type="text" />
-    </label>
-    <label class="field">
-      <span>sublabel</span>
-      <input id="box-sublabel-input" type="text" />
-    </label>
-    <div class="inspector-footer">
-      <button id="box-delete" class="btn danger">delete</button>
-    </div>
-  </aside>
-`;
+  `;
 
-const canvas = document.querySelector<HTMLDivElement>("#canvas")!;
-const inspector = document.querySelector<HTMLElement>("#inspector")!;
-const sceneInput = document.querySelector<HTMLInputElement>("#scene-input")!;
-const centerLabelInput = document.querySelector<HTMLInputElement>("#center-label-input")!;
-const centerSublabelInput = document.querySelector<HTMLInputElement>("#center-sublabel-input")!;
-const boxLabelInput = document.querySelector<HTMLInputElement>("#box-label-input")!;
-const boxSublabelInput = document.querySelector<HTMLInputElement>("#box-sublabel-input")!;
-const bgSelect = document.querySelector<HTMLSelectElement>("#bg-select")!;
-const shapeGrid = document.querySelector<HTMLDivElement>("#shape-grid")!;
-const modeSeg = document.querySelector<HTMLDivElement>("#mode-seg")!;
-const hintSpan = document.querySelector<HTMLSpanElement>("#hint")!;
+  shellEl = document.querySelector<HTMLElement>("#shell")!;
+  canvas = document.querySelector<HTMLDivElement>("#canvas")!;
+  inspector = document.querySelector<HTMLElement>("#inspector")!;
+  sceneInput = document.querySelector<HTMLInputElement>("#scene-input")!;
+  centerLabelInput = document.querySelector<HTMLInputElement>("#center-label-input")!;
+  centerSublabelInput = document.querySelector<HTMLInputElement>("#center-sublabel-input")!;
+  boxLabelInput = document.querySelector<HTMLInputElement>("#box-label-input")!;
+  boxSublabelInput = document.querySelector<HTMLInputElement>("#box-sublabel-input")!;
+  bgSelect = document.querySelector<HTMLSelectElement>("#bg-select")!;
+  shapeGrid = document.querySelector<HTMLDivElement>("#shape-grid")!;
+  modeSeg = document.querySelector<HTMLDivElement>("#mode-seg")!;
+  hintSpan = document.querySelector<HTMLSpanElement>("#hint")!;
+  galleryList = document.querySelector<HTMLUListElement>("#gallery-list")!;
+  galleryEmpty = document.querySelector<HTMLDivElement>("#gallery-empty")!;
+  galleryError = document.querySelector<HTMLDivElement>("#gallery-error")!;
+  galleryCount = document.querySelector<HTMLSpanElement>("#gallery-count")!;
 
-Object.assign(state, decodeStateFromHash() ?? loadDraft() ?? {});
-normalizeState();
+  Object.assign(state, decodeStateFromHash() ?? loadDraft() ?? {});
+  normalizeState();
 
-sceneInput.value = state.scene;
-centerLabelInput.value = state.centerLabel;
-centerSublabelInput.value = state.centerSublabel;
-bgSelect.value = state.background;
+  sceneInput.value = state.scene;
+  centerLabelInput.value = state.centerLabel;
+  centerSublabelInput.value = state.centerSublabel;
+  bgSelect.value = state.background;
+
+  // Default mode: view for an existing diagram, draw for an empty canvas.
+  currentMode = state.boxes.length > 0 || state.connectors.length > 0 ? "view" : "draw";
+
+  wireEvents();
+  setMode(currentMode);
+  render();
+
+  // Load-from-query on boot — agent-generated URLs use ?load=mutable://diagrams/...
+  (async () => {
+    const params = new URLSearchParams(location.search);
+    const loadUri = params.get("load");
+    if (!loadUri) return;
+    try {
+      const rec = await diagramStore.load(loadUri);
+      if (rec) {
+        loadDiagramState(rec.diagram as Partial<DiagramState>);
+        setMode("view");
+      }
+    } catch (err) {
+      console.warn(`load from ?load=${loadUri} failed`, err);
+    }
+  })();
+}
 
 const HINTS: Record<Mode, string> = {
-  view: "view mode — read-only · press  a  (author)  or  c  (connect)",
-  author: "double-click empty canvas to add a box · drag to move · single click deselects  ·  esc / a / c switch modes",
-  connect: "click two boxes (or the center) to connect them · arrow = flow  ·  esc / a / c switch modes",
+  gallery: "gallery — saved diagrams · click a tile to open · g / v / d / c switch modes",
+  view: "view — read-only · g / v / d / c switch modes",
+  draw: "draw — double-click empty canvas to add a box · drag to move · esc / g / v / c switch modes",
+  connect: "connect — click two boxes (or the center) to link them · esc / g / v / d switch modes",
 };
 
 function setMode(m: Mode): void {
   currentMode = m;
   connectFrom = null;
-  if (m !== "author") {
-    // Inspector edits boxes in author mode only. Leaving author discards
-    // the current box selection and hides the floating form immediately so
-    // there's no stale-position flash before the next render runs.
+  if (m !== "draw") {
     selectedId = null;
     inspector.hidden = true;
   }
-  if (m === "view") selectedConnectorId = null;
+  if (m === "view" || m === "gallery") selectedConnectorId = null;
+  shellEl.dataset.mode = m;
   updateModeUI();
+  if (m === "gallery") refreshGallery();
   render();
 }
 
@@ -276,59 +360,111 @@ function updateModeUI(): void {
   hintSpan.textContent = HINTS[currentMode];
 }
 
-sceneInput.addEventListener("input", () => { state.scene = sceneInput.value; render(); });
-centerLabelInput.addEventListener("input", () => { state.centerLabel = centerLabelInput.value; render(); });
-centerSublabelInput.addEventListener("input", () => { state.centerSublabel = centerSublabelInput.value; render(); });
-bgSelect.addEventListener("change", () => { state.background = bgSelect.value as Background; render(); });
-shapeGrid.addEventListener("click", (e) => {
-  const btn = (e.target as Element).closest("button[data-shape]") as HTMLButtonElement | null;
-  if (!btn || !selectedId) return;
-  const box = state.boxes.find((b) => b.id === selectedId);
-  if (!box) return;
-  box.shape = btn.dataset.shape as Shape;
-  render();
-});
+function wireEvents(): void {
+  sceneInput.addEventListener("input", () => { state.scene = sceneInput.value; render(); });
+  centerLabelInput.addEventListener("input", () => { state.centerLabel = centerLabelInput.value; render(); });
+  centerSublabelInput.addEventListener("input", () => { state.centerSublabel = centerSublabelInput.value; render(); });
+  bgSelect.addEventListener("change", () => { state.background = bgSelect.value as Background; render(); });
 
-modeSeg.addEventListener("click", (e) => {
-  const btn = (e.target as Element).closest("button[data-mode]") as HTMLButtonElement | null;
-  if (!btn) return;
-  setMode(btn.dataset.mode as Mode);
-});
+  shapeGrid.addEventListener("click", (e) => {
+    const btn = (e.target as Element).closest("button[data-shape]") as HTMLButtonElement | null;
+    if (!btn || !selectedId) return;
+    const box = state.boxes.find((b) => b.id === selectedId);
+    if (!box) return;
+    box.shape = btn.dataset.shape as Shape;
+    render();
+  });
 
-document.querySelector<HTMLButtonElement>("#copy-png")!.addEventListener("click", copyPNG);
-document.querySelector<HTMLButtonElement>("#new-diagram")!.addEventListener("click", newDiagram);
-document.querySelector<HTMLButtonElement>("#box-delete")!.addEventListener("click", deleteSelected);
-boxLabelInput.addEventListener("input", updateSelectedFromInputs);
-boxSublabelInput.addEventListener("input", updateSelectedFromInputs);
+  modeSeg.addEventListener("click", (e) => {
+    const btn = (e.target as Element).closest("button[data-mode]") as HTMLButtonElement | null;
+    if (!btn) return;
+    setMode(btn.dataset.mode as Mode);
+  });
 
-document.addEventListener("keydown", (e) => {
-  const active = document.activeElement;
-  const typing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
-  if (!typing && (e.key === "Backspace" || e.key === "Delete")) {
-    if (selectedId) {
-      e.preventDefault();
-      deleteSelected();
-    } else if (selectedConnectorId) {
-      e.preventDefault();
-      deleteSelectedConnector();
+  document.querySelector<HTMLButtonElement>("#copy-png")!.addEventListener("click", copyPNG);
+  document.querySelector<HTMLButtonElement>("#new-diagram")!.addEventListener("click", newDiagram);
+  document.querySelector<HTMLButtonElement>("#box-delete")!.addEventListener("click", deleteSelected);
+  boxLabelInput.addEventListener("input", updateSelectedFromInputs);
+  boxSublabelInput.addEventListener("input", updateSelectedFromInputs);
+
+  document.querySelector<HTMLButtonElement>("#gallery-refresh")!
+    .addEventListener("click", () => refreshGallery());
+
+  document.querySelector<HTMLButtonElement>("#save-diagram")!
+    .addEventListener("click", async () => {
+      const btn = document.querySelector<HTMLButtonElement>("#save-diagram")!;
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "saving…";
+      try {
+        const rec = await diagramStore.save(state);
+        btn.textContent = `saved · ${rec.slug.slice(0, 24)}${rec.slug.length > 24 ? "…" : ""}`;
+        if (currentMode === "gallery") refreshGallery();
+      } catch (err) {
+        btn.textContent = "save failed";
+        console.warn("save failed", err);
+      }
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }, 1800);
+    });
+
+  galleryList.addEventListener("click", async (e) => {
+    const li = (e.target as Element).closest("li.gallery-tile") as HTMLLIElement | null;
+    if (!li || !li.dataset.uri) return;
+    try {
+      const rec = await diagramStore.load(li.dataset.uri);
+      if (rec) {
+        loadDiagramState(rec.diagram as Partial<DiagramState>);
+        setMode("view");
+      }
+    } catch (err) {
+      console.warn("load failed", err);
     }
-  }
-  if (e.key === "Escape") {
-    if (active instanceof HTMLElement) active.blur();
-    setMode("view");
-    return;
-  }
-  if (!typing) {
-    if (e.key === "a" || e.key === "A") {
-      setMode("author");
+  });
+
+  document.querySelector<HTMLButtonElement>("#message-bar-dismiss")
+    ?.addEventListener("click", () => hideMessage());
+
+  document.addEventListener("keydown", (e) => {
+    const active = document.activeElement;
+    const typing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+    if (!typing && (e.key === "Backspace" || e.key === "Delete")) {
+      if (selectedId) {
+        e.preventDefault();
+        deleteSelected();
+      } else if (selectedConnectorId) {
+        e.preventDefault();
+        deleteSelectedConnector();
+      }
+    }
+    if (e.key === "Escape") {
+      if (active instanceof HTMLElement) active.blur();
+      setMode("view");
       return;
     }
-    if (e.key === "c" || e.key === "C") {
-      setMode("connect");
+    if (!typing) {
+      if (e.key === "g" || e.key === "G") { setMode("gallery"); return; }
+      if (e.key === "v" || e.key === "V") { setMode("view"); return; }
+      if (e.key === "d" || e.key === "D") { setMode("draw"); return; }
+      if (e.key === "c" || e.key === "C") { setMode("connect"); return; }
+    }
+  });
+
+  window.addEventListener("hashchange", () => {
+    if (location.hash === "#design-system") {
+      location.reload();
       return;
     }
-  }
-});
+    const fromHash = decodeStateFromHash();
+    if (!fromHash) return;
+    loadDiagramState(fromHash);
+  });
+
+  window.addEventListener("scroll", positionInspector, true);
+  window.addEventListener("resize", positionInspector);
+}
 
 function loadDiagramState(newState: Partial<DiagramState>): void {
   Object.assign(state, newState);
@@ -343,30 +479,43 @@ function loadDiagramState(newState: Partial<DiagramState>): void {
   render();
 }
 
-window.addEventListener("hashchange", () => {
-  const fromHash = decodeStateFromHash();
-  if (!fromHash) return;
-  loadDiagramState(fromHash);
-});
+// ---------------- Message bar ----------------
+
+function showMessage(text: string, kind: "info" | "warn" | "ok" = "info"): void {
+  const bar = document.querySelector<HTMLDivElement>("#message-bar");
+  const txt = document.querySelector<HTMLSpanElement>("#message-bar-text");
+  if (!bar || !txt) return;
+  txt.textContent = text;
+  bar.className = `message-bar ${kind}`;
+  bar.hidden = false;
+  shellEl.dataset.message = "1";
+}
+
+function hideMessage(): void {
+  const bar = document.querySelector<HTMLDivElement>("#message-bar");
+  if (!bar) return;
+  bar.hidden = true;
+  delete shellEl.dataset.message;
+}
+
+// Expose for ad-hoc announcements: window.sideframerMessage("beta is out", "info")
+(window as unknown as { sideframerMessage?: typeof showMessage }).sideframerMessage = showMessage;
 
 // ---------------- Gallery ----------------
 
-const galleryPanel = document.querySelector<HTMLElement>("#gallery")!;
-const galleryList = document.querySelector<HTMLUListElement>("#gallery-list")!;
-const galleryEmpty = document.querySelector<HTMLDivElement>("#gallery-empty")!;
-const galleryError = document.querySelector<HTMLDivElement>("#gallery-error")!;
-
 async function refreshGallery(): Promise<void> {
+  if (!galleryError) return;
   galleryError.hidden = true;
   try {
     const items = await diagramStore.list();
     galleryList.innerHTML = "";
     galleryEmpty.hidden = items.length > 0;
+    galleryCount.textContent = items.length > 0 ? `${items.length} saved` : "";
     for (const { uri, slug } of items) {
       const li = document.createElement("li");
-      li.className = "gallery-item";
+      li.className = "gallery-tile";
       li.dataset.uri = uri;
-      li.innerHTML = `<span class="g-slug">${esc(slug)}</span>`;
+      li.innerHTML = `<span class="g-slug">${esc(slug)}</span><span class="g-uri">${esc(uri)}</span>`;
       li.title = uri;
       galleryList.appendChild(li);
     }
@@ -376,62 +525,10 @@ async function refreshGallery(): Promise<void> {
       `couldn't reach storage server (${STORAGE_SERVER}). is it running? — npm run serve`;
     galleryList.innerHTML = "";
     galleryEmpty.hidden = true;
+    galleryCount.textContent = "";
     console.warn("gallery refresh failed", e);
   }
 }
-
-galleryList.addEventListener("click", async (e) => {
-  const li = (e.target as Element).closest("li.gallery-item") as HTMLLIElement | null;
-  if (!li || !li.dataset.uri) return;
-  try {
-    const rec = await diagramStore.load(li.dataset.uri);
-    if (rec) loadDiagramState(rec.diagram as Partial<DiagramState>);
-  } catch (err) {
-    console.warn("load failed", err);
-  }
-});
-
-document.querySelector<HTMLButtonElement>("#toggle-gallery")!
-  .addEventListener("click", () => {
-    galleryPanel.hidden = !galleryPanel.hidden;
-    if (!galleryPanel.hidden) refreshGallery();
-  });
-
-document.querySelector<HTMLButtonElement>("#gallery-refresh")!
-  .addEventListener("click", () => refreshGallery());
-
-document.querySelector<HTMLButtonElement>("#save-diagram")!
-  .addEventListener("click", async () => {
-    const btn = document.querySelector<HTMLButtonElement>("#save-diagram")!;
-    const orig = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = "saving…";
-    try {
-      const rec = await diagramStore.save(state);
-      btn.textContent = `saved · ${rec.slug.slice(0, 24)}${rec.slug.length > 24 ? "…" : ""}`;
-      if (!galleryPanel.hidden) refreshGallery();
-    } catch (err) {
-      btn.textContent = "save failed";
-      console.warn("save failed", err);
-    }
-    setTimeout(() => {
-      btn.disabled = false;
-      btn.textContent = orig;
-    }, 1800);
-  });
-
-// Load-from-query on boot — agent-generated URLs use ?load=mutable://diagrams/...
-(async () => {
-  const params = new URLSearchParams(location.search);
-  const loadUri = params.get("load");
-  if (!loadUri) return;
-  try {
-    const rec = await diagramStore.load(loadUri);
-    if (rec) loadDiagramState(rec.diagram as Partial<DiagramState>);
-  } catch (err) {
-    console.warn(`load from ?load=${loadUri} failed`, err);
-  }
-})();
 
 // ---------------- Helpers ----------------
 
@@ -476,8 +573,6 @@ function findEndpoint(id: string): { x: number; y: number; w: number; h: number 
   const box = state.boxes.find((b) => b.id === id);
   if (!box) return null;
   if (box.shape === "user") {
-    // Tighten the connector endpoint to the visible figure so arrows don't
-    // terminate in the empty horizontal padding of the box rect.
     const m = userFigureMetrics(box);
     const halfW = Math.max(m.armSpan, m.headR);
     const cx = box.x + box.w / 2;
@@ -513,6 +608,7 @@ function rectBoundary(r: { x: number; y: number; w: number; h: number }, toX: nu
 // ---------------- Render ----------------
 
 function render(): void {
+  if (!canvas) return;
   canvas.innerHTML = buildSVG();
   bindCanvasEvents();
   syncInspector();
@@ -619,8 +715,6 @@ function renderBox(b: Box): string {
   const isConnectSource = currentMode === "connect" && connectFrom === b.id;
   const stroke = sel ? "#3b82f6" : isConnectSource ? "#10b981" : "#54524c";
   const sw = sel ? 2.5 : 1.5;
-  // The user shape draws a figure in the upper portion of the box; the
-  // label sits below the figure rather than centered through it.
   const labelBelow = b.shape === "user";
   const labelY = labelBelow
     ? b.y + b.h - (b.sublabel ? 18 : 8)
@@ -675,8 +769,6 @@ function renderShape(b: Box, fill: string, stroke: string, sw: number, dashed = 
       return `<path transform="translate(${x - 1 * sx},${y - 4.5 * sy}) scale(${sx},${sy})" d="M2.25 15a4.5 4.5 0 0 0 4.5 4.5H18a3.75 3.75 0 0 0 1.332-7.257 3 3 0 0 0-3.758-3.848 5.25 5.25 0 0 0-10.233 2.33A4.502 4.502 0 0 0 2.25 15Z" ${a} vector-effect="non-scaling-stroke"/>`;
     }
     case "user": {
-      // Jointed stick-figure actor. The figure occupies the upper portion of
-      // the box; the label sits beneath it (see renderBox).
       const { figureH, headR, armSpan, legSpan } = userFigureMetrics(b);
       const cx = x + w / 2;
       const headCy = y + headR + figureH * 0.04;
@@ -725,7 +817,8 @@ function renderConnector(c: Connector): string {
 // ---------------- Pointer interactions ----------------
 
 function bindCanvasEvents(): void {
-  const svgEl = document.querySelector<SVGSVGElement>("#svg-root")!;
+  const svgEl = document.querySelector<SVGSVGElement>("#svg-root");
+  if (!svgEl) return;
   svgEl.addEventListener("mousedown", onMouseDown);
   svgEl.addEventListener("dblclick", onDoubleClick);
 }
@@ -742,10 +835,6 @@ function svgPoint(svg: SVGSVGElement, evt: MouseEvent): { x: number; y: number }
 }
 
 function onMouseDown(e: MouseEvent): void {
-  // Blur any focused toolbar/inspector input so keyboard shortcuts (Delete,
-  // Backspace, Escape) hit the canvas-aware handler instead of being absorbed
-  // by an input. Author-mode paths below will re-focus the box label input
-  // when appropriate.
   if (document.activeElement instanceof HTMLElement) {
     document.activeElement.blur();
   }
@@ -757,12 +846,8 @@ function onMouseDown(e: MouseEvent): void {
   const connectorGroup = target.closest("g.connector") as SVGGElement | null;
   const centerGroup = target.closest("g.center") as SVGGElement | null;
 
-  // View mode: no canvas interactions
-  if (currentMode === "view") {
-    return;
-  }
+  if (currentMode === "view" || currentMode === "gallery") return;
 
-  // Connect mode: clicks only place / select connectors
   if (currentMode === "connect") {
     if (boxGroup) {
       handleConnectClick(boxGroup.dataset.id!);
@@ -778,7 +863,6 @@ function onMouseDown(e: MouseEvent): void {
       render();
       return;
     }
-    // empty click cancels in-progress / selection
     if (connectFrom !== null || selectedConnectorId !== null) {
       connectFrom = null;
       selectedConnectorId = null;
@@ -787,7 +871,7 @@ function onMouseDown(e: MouseEvent): void {
     return;
   }
 
-  // Author mode (default editing behavior)
+  // Draw mode
   if (boxGroup) {
     const id = boxGroup.dataset.id!;
     const box = state.boxes.find((b) => b.id === id);
@@ -819,11 +903,6 @@ function onMouseDown(e: MouseEvent): void {
     return;
   }
 
-  // Single click on empty canvas just deselects.
-  // Double-click adds a new box (see onDoubleClick). render() rebuilds the
-  // SVG element wholesale, which would break the browser's double-click
-  // detection mid-sequence — so only re-render when something actually
-  // needs to be deselected.
   if (selectedId !== null || selectedConnectorId !== null) {
     selectedId = null;
     selectedConnectorId = null;
@@ -832,11 +911,10 @@ function onMouseDown(e: MouseEvent): void {
 }
 
 function onDoubleClick(e: MouseEvent): void {
-  if (currentMode !== "author") return;
+  if (currentMode !== "draw") return;
   const svgEl = e.currentTarget as SVGSVGElement;
   const { x, y } = svgPoint(svgEl, e);
   const target = e.target as Element;
-  // Don't spawn on top of existing artifacts.
   if (target.closest("g.box") || target.closest("g.center") || target.closest("g.connector")) return;
   if (!isInFrame(x, y) || isInCenter(x, y)) return;
 
@@ -865,17 +943,11 @@ function handleConnectClick(id: string): void {
   if (connectFrom === null) {
     connectFrom = id;
   } else if (connectFrom === id) {
-    // clicking the source again cancels
     connectFrom = null;
   } else if (state.connectors.some((c) => c.from === connectFrom && c.to === id)) {
-    // Connector already exists from source → target. Don't duplicate; instead
-    // promote the target as the new source so the user can walk a chain
-    // (A → B → C → D) by clicking each downstream box in sequence.
     connectFrom = id;
   } else {
     state.connectors.push({ id: uid(), from: connectFrom, to: id });
-    // connectFrom stays set so the user can fan out from the same source
-    // to multiple targets. Empty-canvas click or Escape clears it.
   }
   render();
 }
@@ -902,7 +974,7 @@ function onMouseUp(): void {
 // ---------------- Inspector ----------------
 
 function syncInspector(): void {
-  if (currentMode !== "author" || !selectedId) {
+  if (currentMode !== "draw" || !selectedId) {
     inspector.hidden = true;
     return;
   }
@@ -925,7 +997,7 @@ const INSPECTOR_W = 220;
 const INSPECTOR_GAP = 10;
 
 function positionInspector(): void {
-  if (inspector.hidden || !selectedId) return;
+  if (!inspector || inspector.hidden || !selectedId) return;
   const boxEl = document.querySelector(`g.box[data-id="${CSS.escape(selectedId)}"]`) as SVGGElement | null;
   if (!boxEl) return;
   const rect = boxEl.getBoundingClientRect();
@@ -933,7 +1005,6 @@ function positionInspector(): void {
   const w = insRect.width || INSPECTOR_W;
   const h = insRect.height || 260;
 
-  // Prefer left side of the box; flip to the right if off-screen.
   let left = rect.left - w - INSPECTOR_GAP;
   if (left < 16) {
     left = rect.right + INSPECTOR_GAP;
@@ -943,9 +1014,6 @@ function positionInspector(): void {
   }
   if (left < 16) left = 16;
 
-  // Align the shape grid (not the inspector's top edge) with the box's top
-  // so the user's mouse can travel straight from box → desired shape
-  // without the "shape" title sitting in the way.
   const shapeGridEl = document.querySelector<HTMLDivElement>("#shape-grid");
   const shapeOffsetY = shapeGridEl
     ? shapeGridEl.getBoundingClientRect().top - insRect.top
@@ -957,9 +1025,6 @@ function positionInspector(): void {
   inspector.style.left = `${left}px`;
   inspector.style.top = `${top}px`;
 }
-
-window.addEventListener("scroll", positionInspector, true);
-window.addEventListener("resize", positionInspector);
 
 function updateSelectedFromInputs(): void {
   if (!selectedId) return;
@@ -999,13 +1064,12 @@ function newDiagram(): void {
   sceneInput.value = state.scene;
   centerLabelInput.value = state.centerLabel;
   centerSublabelInput.value = state.centerSublabel;
-  render();
+  setMode("draw");
 }
 
 // ---------------- PNG export ----------------
 
 async function copyPNG(): Promise<void> {
-  // Capture XML synchronously inside the user gesture. Hide selection from export.
   const prevSelected = selectedId;
   const prevSelectedConnector = selectedConnectorId;
   const prevConnectFrom = connectFrom;
@@ -1019,7 +1083,6 @@ async function copyPNG(): Promise<void> {
   selectedConnectorId = prevSelectedConnector;
   connectFrom = prevConnectFrom;
 
-  // Build the PNG blob lazily; the gesture grant survives a Promise<Blob> in ClipboardItem.
   const pngPromise: Promise<Blob> = (async () => {
     const svgBlob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(svgBlob);
@@ -1064,7 +1127,13 @@ function flash(msg: string, isError = false): void {
   }, 2000);
 }
 
-// ---------------- Boot ----------------
+// ---------------- App-level routing ----------------
 
-updateModeUI();
-render();
+if (location.hash === "#design-system") {
+  renderDesignSystem(app, { renderShape, shapeIconSvg, SHAPES });
+  window.addEventListener("hashchange", () => {
+    if (location.hash !== "#design-system") location.reload();
+  });
+} else {
+  bootDiagrammer();
+}
