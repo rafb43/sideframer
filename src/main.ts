@@ -81,6 +81,7 @@ let selectedConnectorId: string | null = null;
 let dragState: { id: string; offsetX: number; offsetY: number; moved: boolean } | null = null;
 let currentMode: Mode = "draw";
 let connectFrom: string | null = null;
+let galleryToken = 0;
 
 // DOM refs — assigned by bootDiagrammer()
 let shellEl!: HTMLElement;
@@ -153,9 +154,22 @@ function decodeStateFromHash(): Partial<DiagramState> | null {
   }
 }
 
+function decodeModeFromHash(): Mode | null {
+  const hash = window.location.hash;
+  if (!hash) return null;
+  const m = hash.match(/[#&]m=([^&]+)/);
+  if (!m) return null;
+  const mode = m[1] as Mode;
+  return MODES.includes(mode) ? mode : null;
+}
+
+function currentHashUrl(): string {
+  return `#m=${currentMode}&d=${b64urlEncode(JSON.stringify(state))}`;
+}
+
 function writeStateToHash(): void {
   try {
-    history.replaceState(null, "", `#d=${b64urlEncode(JSON.stringify(state))}`);
+    history.replaceState(null, "", currentHashUrl());
   } catch {
     // ignore security/quota errors
   }
@@ -307,8 +321,9 @@ function bootDiagrammer(): void {
   centerSublabelInput.value = state.centerSublabel;
   bgSelect.value = state.background;
 
-  // Default mode: view for an existing diagram, draw for an empty canvas.
-  currentMode = state.boxes.length > 0 || state.connectors.length > 0 ? "view" : "draw";
+  // Mode precedence: URL hash > derived default (view if non-empty, draw if empty).
+  currentMode = decodeModeFromHash()
+    ?? (state.boxes.length > 0 || state.connectors.length > 0 ? "view" : "draw");
 
   wireEvents();
   setMode(currentMode);
@@ -339,6 +354,7 @@ const HINTS: Record<Mode, string> = {
 };
 
 function setMode(m: Mode): void {
+  const modeChanged = m !== currentMode;
   currentMode = m;
   connectFrom = null;
   if (m !== "draw") {
@@ -348,6 +364,15 @@ function setMode(m: Mode): void {
   if (m === "view" || m === "gallery") selectedConnectorId = null;
   shellEl.dataset.mode = m;
   updateModeUI();
+  // Push a new history entry only when the user changes mode and the hash
+  // doesn't already reflect it (so hashchange-driven setMode doesn't double-push).
+  if (modeChanged && decodeModeFromHash() !== m) {
+    try {
+      history.pushState(null, "", currentHashUrl());
+    } catch {
+      // ignore security/quota errors
+    }
+  }
   if (m === "gallery") refreshGallery();
   render();
 }
@@ -418,6 +443,7 @@ function wireEvents(): void {
       if (rec) {
         loadDiagramState(rec.diagram as Partial<DiagramState>);
         setMode("view");
+        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
       }
     } catch (err) {
       console.warn("load failed", err);
@@ -444,7 +470,7 @@ function wireEvents(): void {
       setMode("view");
       return;
     }
-    if (!typing) {
+    if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
       if (e.key === "g" || e.key === "G") { setMode("gallery"); return; }
       if (e.key === "v" || e.key === "V") { setMode("view"); return; }
       if (e.key === "d" || e.key === "D") { setMode("draw"); return; }
@@ -458,8 +484,9 @@ function wireEvents(): void {
       return;
     }
     const fromHash = decodeStateFromHash();
-    if (!fromHash) return;
-    loadDiagramState(fromHash);
+    if (fromHash) loadDiagramState(fromHash);
+    const modeFromHash = decodeModeFromHash();
+    if (modeFromHash && modeFromHash !== currentMode) setMode(modeFromHash);
   });
 
   window.addEventListener("scroll", positionInspector, true);
@@ -506,20 +533,31 @@ function hideMessage(): void {
 async function refreshGallery(): Promise<void> {
   if (!galleryError) return;
   galleryError.hidden = true;
+  const token = ++galleryToken;
   try {
     const items = await diagramStore.list();
+    if (token !== galleryToken) return;
     galleryList.innerHTML = "";
     galleryEmpty.hidden = items.length > 0;
     galleryCount.textContent = items.length > 0 ? `${items.length} saved` : "";
+    const rows: { li: HTMLLIElement; uri: string }[] = [];
     for (const { uri, slug } of items) {
       const li = document.createElement("li");
       li.className = "gallery-tile";
       li.dataset.uri = uri;
-      li.innerHTML = `<span class="g-slug">${esc(slug)}</span><span class="g-uri">${esc(uri)}</span>`;
       li.title = uri;
+      li.innerHTML = `
+        <div class="g-meta">
+          <span class="g-slug">${esc(slug)}</span>
+          <span class="g-uri">${esc(uri)}</span>
+        </div>
+        <div class="g-preview is-empty" data-preview>…</div>`;
       galleryList.appendChild(li);
+      rows.push({ li, uri });
     }
+    await Promise.all(rows.map(({ li, uri }) => populatePreview(li, uri, token)));
   } catch (e) {
+    if (token !== galleryToken) return;
     galleryError.hidden = false;
     galleryError.textContent =
       `couldn't reach storage server (${STORAGE_SERVER}). is it running? — npm run serve`;
@@ -528,6 +566,57 @@ async function refreshGallery(): Promise<void> {
     galleryCount.textContent = "";
     console.warn("gallery refresh failed", e);
   }
+}
+
+async function populatePreview(li: HTMLLIElement, uri: string, token: number): Promise<void> {
+  const slot = li.querySelector<HTMLDivElement>("[data-preview]");
+  if (!slot) return;
+  try {
+    const rec = await diagramStore.load(uri);
+    if (token !== galleryToken) return;
+    const diagram = rec?.diagram as Partial<DiagramState> | undefined;
+    if (!diagram) {
+      slot.textContent = "no preview";
+      return;
+    }
+    slot.classList.remove("is-empty");
+    slot.innerHTML = buildPreviewSVG(diagram);
+  } catch {
+    if (token !== galleryToken) return;
+    slot.textContent = "preview failed";
+  }
+}
+
+function buildPreviewSVG(d: Partial<DiagramState>): string {
+  const boxes: Box[] = Array.isArray(d.boxes) ? d.boxes : [];
+  const connectors: Connector[] = Array.isArray(d.connectors) ? d.connectors : [];
+  const center = { x: CENTER_X, y: CENTER_Y, w: CENTER_W, h: CENTER_H };
+  const endpoint = (id: string) => {
+    if (id === CENTER_ID) return center;
+    const b = boxes.find((x) => x.id === id);
+    return b ? { x: b.x, y: b.y, w: b.w, h: b.h } : null;
+  };
+  const lines = connectors.map((c) => {
+    const from = endpoint(c.from);
+    const to = endpoint(c.to);
+    if (!from || !to) return "";
+    const start = rectBoundary(from, to.x + to.w / 2, to.y + to.h / 2);
+    const end = rectBoundary(to, from.x + from.w / 2, from.y + from.h / 2);
+    return `<line x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="#8a8678" stroke-width="3"/>`;
+  }).join("");
+  const shapes = boxes.map((b) =>
+    renderShape(b, "#2a2a28", "#2a2a28", 2)
+  ).join("");
+  return `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}" preserveAspectRatio="xMidYMid meet">
+  <rect x="0" y="0" width="${CANVAS_W}" height="${CANVAS_H}" fill="#fbfaf6"/>
+  <rect x="${PAD}" y="${PAD}" width="${CANVAS_W - 2 * PAD}" height="${CANVAS_H - 2 * PAD}"
+        fill="none" stroke="#dcd6c4" stroke-width="3" rx="6"/>
+  ${lines}
+  <rect x="${center.x}" y="${center.y}" width="${center.w}" height="${center.h}"
+        fill="#ffffff" stroke="#2a2a28" stroke-width="3" rx="8"/>
+  ${shapes}
+</svg>`;
 }
 
 // ---------------- Helpers ----------------
@@ -1130,7 +1219,7 @@ function flash(msg: string, isError = false): void {
 // ---------------- App-level routing ----------------
 
 if (location.hash === "#design-system") {
-  renderDesignSystem(app, { renderShape, shapeIconSvg, SHAPES });
+  renderDesignSystem(app, { renderShape, shapeIconSvg, buildPreviewSVG, SHAPES });
   window.addEventListener("hashchange", () => {
     if (location.hash !== "#design-system") location.reload();
   });

@@ -6,15 +6,18 @@ type Shape =
   | "rect" | "rounded" | "document" | "subprocess"
   | "database" | "server" | "cloud" | "user";
 
+interface DSBox {
+  id: string; label: string; sublabel: string; shape: Shape;
+  x: number; y: number; w: number; h: number;
+}
+
 interface DSDeps {
-  renderShape: (
-    b: { id: string; label: string; sublabel: string; shape: Shape; x: number; y: number; w: number; h: number },
-    fill: string,
-    stroke: string,
-    sw: number,
-    dashed?: boolean,
-  ) => string;
+  renderShape: (b: DSBox, fill: string, stroke: string, sw: number, dashed?: boolean) => string;
   shapeIconSvg: (shape: Shape) => string;
+  buildPreviewSVG: (d: {
+    boxes?: DSBox[];
+    connectors?: { id: string; from: string; to: string }[];
+  }) => string;
   SHAPES: readonly Shape[];
 }
 
@@ -40,9 +43,9 @@ function page(deps: DSDeps): string {
       ${sectionMasthead()}
       ${sectionContextActions()}
       ${sectionFooters()}
-      ${sectionGalleryTiles()}
+      ${sectionGalleryTiles(deps)}
       ${sectionInspector(deps)}
-      ${sectionShapes(deps)}
+      ${sectionShapesTable(deps)}
       ${sectionFlash()}
       ${sectionShellPreview()}
     </div>
@@ -223,23 +226,99 @@ function sectionFooters(): string {
   `);
 }
 
-function sectionGalleryTiles(): string {
-  return ds("gallery tile", "Card used in the gallery mode grid.", `
-    <ul class="gallery-grid" style="list-style:none;padding:0;margin:0">
-      <li class="gallery-tile">
-        <span class="g-slug">checkout-flow-9f</span>
-        <span class="g-uri">mutable://diagrams/checkout-flow-9f</span>
-      </li>
-      <li class="gallery-tile">
-        <span class="g-slug">ingest-pipeline-3a</span>
-        <span class="g-uri">mutable://diagrams/ingest-pipeline-3a</span>
-      </li>
-      <li class="gallery-tile">
-        <span class="g-slug">auth-rewrite-7b</span>
-        <span class="g-uri">mutable://diagrams/auth-rewrite-7b</span>
-      </li>
-    </ul>
+function sectionGalleryTiles(deps: DSDeps): string {
+  const fixtures: { slug: string; uri: string; diagram: Parameters<DSDeps["buildPreviewSVG"]>[0] }[] = [
+    {
+      slug: "checkout-flow-9f",
+      uri: "mutable://diagrams/checkout-flow-9f",
+      diagram: galleryFixture("varied"),
+    },
+    {
+      slug: "ingest-pipeline-3a",
+      uri: "mutable://diagrams/ingest-pipeline-3a",
+      diagram: galleryFixture("pipeline"),
+    },
+    {
+      slug: "auth-rewrite-7b",
+      uri: "mutable://diagrams/auth-rewrite-7b",
+      diagram: galleryFixture("hub"),
+    },
+  ];
+  const rows = fixtures.map((f) => `
+    <li class="gallery-tile">
+      <div class="g-meta">
+        <span class="g-slug">${f.slug}</span>
+        <span class="g-uri">${f.uri}</span>
+      </div>
+      <div class="g-preview">${deps.buildPreviewSVG(f.diagram)}</div>
+    </li>
+  `).join("");
+  return ds("gallery tile", "Row used in the gallery list — meta on the left, rendered preview on the right.", `
+    <ul class="gallery-grid">${rows}</ul>
   `);
+}
+
+// Small fixed diagrams used to make the gallery preview legible. Coordinates
+// match the canvas viewBox (1600×1000) consumed by buildPreviewSVG.
+function galleryFixture(kind: "varied" | "pipeline" | "hub"):
+  Parameters<DSDeps["buildPreviewSVG"]>[0] {
+  if (kind === "pipeline") {
+    return {
+      boxes: [
+        { id: "a", label: "", sublabel: "", shape: "subprocess", x: 110, y: 465, w: 170, h: 64 },
+        { id: "b", label: "", sublabel: "", shape: "document", x: 320, y: 465, w: 200, h: 64 },
+        { id: "c", label: "", sublabel: "", shape: "document", x: 1010, y: 465, w: 200, h: 64 },
+        { id: "d", label: "", sublabel: "", shape: "subprocess", x: 1240, y: 465, w: 170, h: 64 },
+        { id: "e", label: "", sublabel: "", shape: "database", x: 510, y: 770, w: 220, h: 64 },
+        { id: "f", label: "", sublabel: "", shape: "cloud", x: 770, y: 770, w: 200, h: 64 },
+      ],
+      connectors: [
+        { id: "1", from: "a", to: "b" },
+        { id: "2", from: "b", to: "@center" },
+        { id: "3", from: "@center", to: "c" },
+        { id: "4", from: "c", to: "d" },
+        { id: "5", from: "@center", to: "e" },
+        { id: "6", from: "e", to: "f" },
+      ],
+    };
+  }
+  if (kind === "hub") {
+    return {
+      boxes: [
+        { id: "u", label: "", sublabel: "", shape: "user", x: 100, y: 465, w: 250, h: 64 },
+        { id: "d1", label: "", sublabel: "", shape: "document", x: 510, y: 110, w: 200, h: 64 },
+        { id: "d2", label: "", sublabel: "", shape: "rounded", x: 750, y: 110, w: 200, h: 64 },
+        { id: "o", label: "", sublabel: "", shape: "server", x: 1010, y: 465, w: 200, h: 64 },
+        { id: "s", label: "", sublabel: "", shape: "database", x: 700, y: 770, w: 220, h: 64 },
+      ],
+      connectors: [
+        { id: "1", from: "u", to: "@center" },
+        { id: "2", from: "@center", to: "d1" },
+        { id: "3", from: "@center", to: "d2" },
+        { id: "4", from: "@center", to: "o" },
+        { id: "5", from: "@center", to: "s" },
+      ],
+    };
+  }
+  // varied
+  return {
+    boxes: [
+      { id: "a", label: "", sublabel: "", shape: "rect", x: 110, y: 230, w: 200, h: 64 },
+      { id: "b", label: "", sublabel: "", shape: "rounded", x: 110, y: 465, w: 200, h: 64 },
+      { id: "c", label: "", sublabel: "", shape: "document", x: 110, y: 700, w: 200, h: 64 },
+      { id: "d", label: "", sublabel: "", shape: "cloud", x: 1290, y: 230, w: 200, h: 64 },
+      { id: "e", label: "", sublabel: "", shape: "database", x: 1290, y: 465, w: 200, h: 64 },
+      { id: "f", label: "", sublabel: "", shape: "server", x: 1290, y: 700, w: 200, h: 64 },
+    ],
+    connectors: [
+      { id: "1", from: "a", to: "@center" },
+      { id: "2", from: "b", to: "@center" },
+      { id: "3", from: "c", to: "@center" },
+      { id: "4", from: "@center", to: "d" },
+      { id: "5", from: "@center", to: "e" },
+      { id: "6", from: "@center", to: "f" },
+    ],
+  };
 }
 
 function sectionInspector(deps: DSDeps): string {
@@ -262,17 +341,50 @@ function sectionInspector(deps: DSDeps): string {
   `);
 }
 
-function sectionShapes(deps: DSDeps): string {
-  const tiles = deps.SHAPES.map((shape) => {
-    const box = { id: "x", label: "", sublabel: "", shape, x: 16, y: 14, w: 90, h: 44 };
-    return `<div class="ds-shape-tile">
-      <svg viewBox="0 0 120 72" width="120" height="72">${deps.renderShape(box, "white", "#54524c", 1.4)}</svg>
-      <span>${shape}</span>
-    </div>`;
+function sectionShapesTable(deps: DSDeps): string {
+  // Three forms each shape takes:
+  //   canvas — what gets drawn on the diagram (white fill, ink stroke)
+  //   icon   — the picker button glyph (used in the inspector shape grid)
+  //   thumb  — silhouette form used in the gallery preview SVG (filled ink)
+  const rows = deps.SHAPES.map((shape) => {
+    const canvasBox: DSBox = { id: "c", label: "", sublabel: "", shape, x: 16, y: 14, w: 90, h: 44 };
+    const thumbBox: DSBox = { id: "t", label: "", sublabel: "", shape, x: 16, y: 14, w: 90, h: 44 };
+    return `<tr>
+      <th scope="row">${shape}</th>
+      <td>
+        <svg viewBox="0 0 120 72" width="120" height="72">
+          ${deps.renderShape(canvasBox, "#ffffff", "#54524c", 1.5)}
+        </svg>
+      </td>
+      <td>
+        <div class="shape-grid" style="display:inline-flex">
+          <button type="button" title="${shape}">${deps.shapeIconSvg(shape)}</button>
+        </div>
+      </td>
+      <td>
+        <svg viewBox="0 0 120 72" width="120" height="72">
+          ${deps.renderShape(thumbBox, "#2a2a28", "#2a2a28", 2)}
+        </svg>
+      </td>
+    </tr>`;
   }).join("");
-  return ds("shapes", "Box shapes available in draw mode.", `
-    <div class="ds-shapes">${tiles}</div>
-  `);
+  return ds(
+    "shapes",
+    "Each shape appears in three forms: rendered on the canvas, as a picker button icon, and as a silhouette in gallery thumbnails.",
+    `
+    <table class="ds-shape-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th>canvas</th>
+          <th>button icon</th>
+          <th>thumbnail</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `,
+  );
 }
 
 function sectionFlash(): string {
