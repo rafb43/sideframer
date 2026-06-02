@@ -1173,6 +1173,10 @@ function onMouseDown(e: MouseEvent): void {
     const id = boxGroup.dataset.id!;
     const box = state.boxes.find((b) => b.id === id);
     if (!box) return;
+    // Suppress the browser's default focus-on-mousedown — without this the UA
+    // moves focus to <body> after our handler returns, undoing the explicit
+    // focus() call below.
+    e.preventDefault();
     selectedId = id;
     selectedCenter = false;
     selectedConnectorId = null;
@@ -1194,6 +1198,7 @@ function onMouseDown(e: MouseEvent): void {
   }
 
   if (centerGroup) {
+    e.preventDefault();
     selectedCenter = true;
     selectedId = null;
     selectedConnectorId = null;
@@ -1225,6 +1230,7 @@ function onMouseDown(e: MouseEvent): void {
 
   if (!isInFrame(x, y) || isInCenter(x, y)) return;
 
+  e.preventDefault();
   const newBox: Box = {
     id: uid(),
     label: "new box",
