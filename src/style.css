@@ -231,10 +231,29 @@ body { min-height: 100vh; }
   min-height: 0;
 }
 
-#shell[data-mode="gallery"] #canvas-pane,
-#shell[data-mode="styles"]  #canvas-pane { display: none; }
+#shell[data-mode="gallery"] #canvas-pane { display: none; }
 #shell:not([data-mode="gallery"]) #gallery-pane { display: none; }
 #shell:not([data-mode="styles"])  #styles-pane  { display: none; }
+
+/* In styles mode, lay the editor next to the canvas so token edits
+   live-preview against the actual diagram. */
+#shell[data-mode="styles"] .mode-content {
+  justify-content: flex-start;
+  align-items: stretch;
+  gap: 16px;
+  padding: 16px;
+}
+
+#shell[data-mode="styles"] #styles-pane {
+  flex: 0 0 460px;
+  max-width: 460px;
+  overflow-y: auto;
+}
+
+#shell[data-mode="styles"] #canvas-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 
 #canvas-pane {
   width: 100%;

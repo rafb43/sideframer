@@ -47,19 +47,61 @@ type Background = "clean" | "grid" | "sections" | "diagonals" | "gradient";
 type Mode = "gallery" | "view" | "draw" | "connect" | "styles";
 const MODES: Mode[] = ["gallery", "view", "draw", "connect", "styles"];
 
-// Tokens the style editor exposes. Adding to this list immediately surfaces
-// a new row in the editor. Defaults match the values declared in style.css
-// — used as the initial values for newly created packs.
-const STYLE_TOKEN_DEFS: { name: string; label: string; default: string }[] = [
-  { name: "--bg", label: "background", default: "#fbfaf6" },
-  { name: "--panel", label: "panel", default: "#fffffe" },
-  { name: "--line", label: "line", default: "#d4d0c4" },
-  { name: "--ink", label: "ink", default: "#2a2a28" },
-  { name: "--mute", label: "muted ink", default: "#6b685f" },
-  { name: "--accent", label: "accent", default: "#3b82f6" },
-  { name: "--danger", label: "danger", default: "#c54a3b" },
-  { name: "--warn", label: "warn", default: "#b27800" },
-  { name: "--ok", label: "ok", default: "#2f7d4f" },
+// Canvas-side tokens — the palette and typography the diagram itself
+// renders with. Brand packs are about the diagram, not the app chrome:
+// the surrounding shell stays in its own CSS-variable world. These
+// values are resolved at render time and stamped literally into the SVG
+// so PNG export carries them faithfully.
+interface CanvasTokens {
+  bg: string;
+  boxFill: string;
+  boxStroke: string;
+  centerFill: string;
+  centerStroke: string;
+  connectorStroke: string;
+  arrowFill: string;
+  ink: string;
+  muteInk: string;
+  fontFamily: string;
+}
+
+const DEFAULT_CANVAS_TOKENS: CanvasTokens = {
+  bg: "#fbfaf6",
+  boxFill: "#ffffff",
+  boxStroke: "#54524c",
+  centerFill: "#ffffff",
+  centerStroke: "#2a2a28",
+  connectorStroke: "#54524c",
+  arrowFill: "#54524c",
+  ink: "#2a2a28",
+  muteInk: "#6b685f",
+  fontFamily: "Arial, Helvetica, sans-serif",
+};
+
+let activeCanvasTokens: CanvasTokens = { ...DEFAULT_CANVAS_TOKENS };
+
+const FONT_FAMILY_OPTIONS: { label: string; value: string }[] = [
+  { label: "Helvetica", value: "Arial, Helvetica, sans-serif" },
+  { label: "Georgia",   value: "Georgia, 'Times New Roman', serif" },
+  { label: "System",    value: "system-ui, -apple-system, Segoe UI, sans-serif" },
+  { label: "Mono",      value: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+];
+
+type StyleTokenDef =
+  | { name: keyof CanvasTokens; label: string; kind: "color"; default: string }
+  | { name: keyof CanvasTokens; label: string; kind: "font"; default: string };
+
+const STYLE_TOKEN_DEFS: StyleTokenDef[] = [
+  { name: "bg",              label: "canvas bg",     kind: "color", default: DEFAULT_CANVAS_TOKENS.bg },
+  { name: "boxFill",         label: "box fill",      kind: "color", default: DEFAULT_CANVAS_TOKENS.boxFill },
+  { name: "boxStroke",       label: "box stroke",    kind: "color", default: DEFAULT_CANVAS_TOKENS.boxStroke },
+  { name: "centerFill",      label: "center fill",   kind: "color", default: DEFAULT_CANVAS_TOKENS.centerFill },
+  { name: "centerStroke",    label: "center stroke", kind: "color", default: DEFAULT_CANVAS_TOKENS.centerStroke },
+  { name: "connectorStroke", label: "connector",     kind: "color", default: DEFAULT_CANVAS_TOKENS.connectorStroke },
+  { name: "arrowFill",       label: "arrow",         kind: "color", default: DEFAULT_CANVAS_TOKENS.arrowFill },
+  { name: "ink",             label: "ink",           kind: "color", default: DEFAULT_CANVAS_TOKENS.ink },
+  { name: "muteInk",         label: "mute ink",      kind: "color", default: DEFAULT_CANVAS_TOKENS.muteInk },
+  { name: "fontFamily",      label: "font",          kind: "font",  default: DEFAULT_CANVAS_TOKENS.fontFamily },
 ];
 
 type Page = "design-system" | "help";
@@ -840,27 +882,29 @@ function loadDiagramState(newState: Partial<DiagramState>): void {
   void applyStyleBinding(state.styleUri);
 }
 
-// Live binding of a style pack: fetch the pack referenced by `uri` and write
-// its tokens onto `:root` as CSS variables. Previous overrides are cleared
-// first so a load doesn't inherit the prior diagram's pack. Failures are
-// non-fatal — the diagram renders with default tokens.
-let appliedTokenNames: string[] = [];
-
+// Live binding of a style pack: fetch the pack referenced by `uri`, merge
+// its tokens into `activeCanvasTokens` over the defaults, then re-render
+// the canvas. A null/missing pack resets to defaults. Failures are
+// non-fatal — the diagram renders with defaults.
 async function applyStyleBinding(uri: string | null | undefined): Promise<void> {
-  const root = document.documentElement.style;
-  for (const name of appliedTokenNames) root.removeProperty(name);
-  appliedTokenNames = [];
-  if (!uri) return;
-  try {
-    const rec = await styleStore.load(uri);
-    if (!rec) return;
-    for (const [name, value] of Object.entries(rec.pack.tokens || {})) {
-      root.setProperty(name, value);
-      appliedTokenNames.push(name);
+  activeCanvasTokens = { ...DEFAULT_CANVAS_TOKENS };
+  if (uri) {
+    try {
+      const rec = await styleStore.load(uri);
+      if (rec) {
+        const incoming = rec.pack.tokens || {};
+        for (const def of STYLE_TOKEN_DEFS) {
+          const v = incoming[def.name];
+          if (typeof v === "string" && v.length > 0) {
+            activeCanvasTokens[def.name] = v;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[sideframer] style load failed", uri, err);
     }
-  } catch (err) {
-    console.warn("[sideframer] style load failed", uri, err);
   }
+  if (canvas) render();
 }
 
 // ---------------- Message bar ----------------
@@ -1022,6 +1066,9 @@ async function refreshStylesPane(): Promise<void> {
 function openStyleEditor(_uri: string | null, pack: StylePack): void {
   // Deep-clone so live edits don't leak into the list's loaded record.
   editedPack = { name: pack.name, tokens: { ...(pack.tokens || {}) } };
+  // Seed the live preview with the pack's tokens so the canvas matches the
+  // editor immediately on open.
+  applyTokensToCanvas(editedPack.tokens || {});
   styleEditor.hidden = false;
   styleEditor.innerHTML = `
     <header class="style-editor-header">
@@ -1038,6 +1085,16 @@ function openStyleEditor(_uri: string | null, pack: StylePack): void {
     <div class="style-token-grid">
       ${STYLE_TOKEN_DEFS.map((t) => {
         const v = editedPack!.tokens?.[t.name] ?? t.default;
+        if (t.kind === "font") {
+          const opts = FONT_FAMILY_OPTIONS.map((o) =>
+            `<option value="${esc(o.value)}"${o.value === v ? " selected" : ""}>${esc(o.label)}</option>`
+          ).join("");
+          return `
+            <label class="field style-token-row">
+              <span>${esc(t.label)}<br><code>${esc(t.name)}</code></span>
+              <select data-token="${esc(t.name)}">${opts}</select>
+            </label>`;
+        }
         return `
           <label class="field field-color style-token-row">
             <span>${esc(t.label)}<br><code>${esc(t.name)}</code></span>
@@ -1045,17 +1102,19 @@ function openStyleEditor(_uri: string | null, pack: StylePack): void {
           </label>`;
       }).join("")}
     </div>`;
-  // Live preview on every color change.
-  styleEditor.querySelectorAll<HTMLInputElement>("input[data-token]").forEach((inp) => {
-    document.documentElement.style.setProperty(inp.dataset.token!, inp.value);
-    inp.addEventListener("input", () => {
-      const name = inp.dataset.token!;
-      document.documentElement.style.setProperty(name, inp.value);
+  // Wire live preview: every change updates the working pack + the canvas.
+  styleEditor.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-token]").forEach((inp) => {
+    const handler = () => {
+      const name = (inp.dataset.token as keyof CanvasTokens);
       if (editedPack) {
         if (!editedPack.tokens) editedPack.tokens = {};
         editedPack.tokens[name] = inp.value;
       }
-    });
+      activeCanvasTokens = { ...activeCanvasTokens, [name]: inp.value };
+      if (canvas) render();
+    };
+    // <input type="color"> fires "input"; <select> fires "change".
+    inp.addEventListener(inp.tagName === "SELECT" ? "change" : "input", handler);
   });
   const nameInput = styleEditor.querySelector<HTMLInputElement>("#style-name-input")!;
   nameInput.addEventListener("input", () => {
@@ -1067,6 +1126,20 @@ function openStyleEditor(_uri: string | null, pack: StylePack): void {
     .addEventListener("click", () => saveStyleEdit(false));
   document.querySelector<HTMLButtonElement>("#style-save-apply")!
     .addEventListener("click", () => saveStyleEdit(true));
+}
+
+// Merge a (partial) pack token map over defaults into `activeCanvasTokens`
+// and re-render. Used by `openStyleEditor` to prime the live preview; the
+// per-input handlers handle subsequent edits in place.
+function applyTokensToCanvas(tokens: Record<string, string>): void {
+  activeCanvasTokens = { ...DEFAULT_CANVAS_TOKENS };
+  for (const def of STYLE_TOKEN_DEFS) {
+    const v = tokens[def.name];
+    if (typeof v === "string" && v.length > 0) {
+      activeCanvasTokens[def.name] = v;
+    }
+  }
+  if (canvas) render();
 }
 
 function closeStyleEditor(): void {
@@ -1258,25 +1331,27 @@ function render(): void {
 }
 
 function buildSVG(): string {
+  const T = activeCanvasTokens;
   const sceneStr = state.scene ? `scene:  ${esc(state.scene)}` : "";
   const centerConnectSource = currentMode === "connect" && connectFrom === CENTER_ID;
   const centerSel = selectedCenter;
-  const centerStroke = centerSel ? "#3b82f6" : centerConnectSource ? "#10b981" : "#2a2a28";
+  const centerStroke = centerSel ? "#3b82f6" : centerConnectSource ? "#10b981" : T.centerStroke;
   const centerSw = centerSel ? 3 : 2.5;
   const centerDashed = centerConnectSource;
+  const ff = esc(T.fontFamily);
   return `
 <svg id="svg-root" class="mode-${currentMode}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}" width="${CANVAS_W}" height="${CANVAS_H}">
   <style>
-    .axis { font: 600 12px Arial, Helvetica, sans-serif; letter-spacing: 4px; fill: #8a8678; }
-    .scene-line { font: 13px Arial, Helvetica, sans-serif; fill: #6b685f; letter-spacing: 0.5px; }
-    .center-label { font: 600 22px Arial, Helvetica, sans-serif; fill: #2a2a28; }
-    .center-sublabel { font: 14px Arial, Helvetica, sans-serif; fill: #6b685f; }
-    .box-label { font: 600 14px Arial, Helvetica, sans-serif; fill: #2a2a28; }
-    .box-sublabel { font: 12px Arial, Helvetica, sans-serif; fill: #6b685f; }
+    .axis { font: 600 12px ${ff}; letter-spacing: 4px; fill: ${T.muteInk}; }
+    .scene-line { font: 13px ${ff}; fill: ${T.muteInk}; letter-spacing: 0.5px; }
+    .center-label { font: 600 22px ${ff}; fill: ${T.ink}; }
+    .center-sublabel { font: 14px ${ff}; fill: ${T.muteInk}; }
+    .box-label { font: 600 14px ${ff}; fill: ${T.ink}; }
+    .box-sublabel { font: 12px ${ff}; fill: ${T.muteInk}; }
   </style>
   <defs>
     <marker id="arrow" viewBox="-10 -5 10 10" refX="0" refY="0" markerWidth="10" markerHeight="10" orient="auto">
-      <path d="M-10,-5 L0,0 L-10,5 Z" fill="#54524c"/>
+      <path d="M-10,-5 L0,0 L-10,5 Z" fill="${T.arrowFill}"/>
     </marker>
     <marker id="arrow-sel" viewBox="-10 -5 10 10" refX="0" refY="0" markerWidth="10" markerHeight="10" orient="auto">
       <path d="M-10,-5 L0,0 L-10,5 Z" fill="#3b82f6"/>
@@ -1304,7 +1379,7 @@ function buildSVG(): string {
     ${renderShape(
       { id: CENTER_ID, label: "", sublabel: "", shape: CENTER_SHAPE,
         x: state.centerX, y: state.centerY, w: CENTER_W, h: CENTER_H },
-      "#ffffff", centerStroke, centerSw, centerDashed,
+      T.centerFill, centerStroke, centerSw, centerDashed,
     )}
     <text class="center-label" x="${state.centerX + CENTER_W / 2}"
           y="${state.centerY + CENTER_H / 2 - (state.centerSublabel ? 10 : 0)}"
@@ -1320,9 +1395,10 @@ function buildSVG(): string {
 }
 
 function renderBackground(): string {
+  const T = activeCanvasTokens;
   switch (state.background) {
     case "clean":
-      return `<rect width="100%" height="100%" fill="#fbfaf6"/>`;
+      return `<rect width="100%" height="100%" fill="${T.bg}"/>`;
     case "grid":
       return `
         <defs>
@@ -1330,12 +1406,12 @@ function renderBackground(): string {
             <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#eee8dc" stroke-width="1"/>
           </pattern>
         </defs>
-        <rect width="100%" height="100%" fill="#fbfaf6"/>
+        <rect width="100%" height="100%" fill="${T.bg}"/>
         <rect width="100%" height="100%" fill="url(#bg-grid)"/>`;
     case "sections": {
       const cx = state.centerX;
       return `
-        <rect width="100%" height="100%" fill="#fbfaf6"/>
+        <rect width="100%" height="100%" fill="${T.bg}"/>
         <rect x="0" y="0" width="${cx}" height="${CANVAS_H}" fill="#f4eddc" opacity="0.55"/>
         <rect x="${cx + CENTER_W}" y="0" width="${CANVAS_W - cx - CENTER_W}" height="${CANVAS_H}" fill="#f4eddc" opacity="0.55"/>
         <line x1="${cx}" y1="${PAD}" x2="${cx}" y2="${CANVAS_H - PAD}" stroke="#d4ceb8" stroke-width="1" stroke-dasharray="3 6"/>
@@ -1343,7 +1419,7 @@ function renderBackground(): string {
     }
     case "diagonals":
       return `
-        <rect width="100%" height="100%" fill="#fbfaf6"/>
+        <rect width="100%" height="100%" fill="${T.bg}"/>
         <line x1="${PAD}" y1="${PAD}" x2="${CANVAS_W - PAD}" y2="${CANVAS_H - PAD}" stroke="#dcd6c4" stroke-width="1"/>
         <line x1="${CANVAS_W - PAD}" y1="${PAD}" x2="${PAD}" y2="${CANVAS_H - PAD}" stroke="#dcd6c4" stroke-width="1"/>`;
     case "gradient": {
@@ -1370,9 +1446,10 @@ function renderBackground(): string {
 }
 
 function renderBox(b: Box): string {
+  const T = activeCanvasTokens;
   const sel = b.id === selectedId;
   const isConnectSource = currentMode === "connect" && connectFrom === b.id;
-  const stroke = sel ? "#3b82f6" : isConnectSource ? "#10b981" : "#54524c";
+  const stroke = sel ? "#3b82f6" : isConnectSource ? "#10b981" : T.boxStroke;
   const sw = sel ? 2.5 : 1.5;
   const labelBelow = b.shape === "user";
   const labelY = labelBelow
@@ -1380,7 +1457,7 @@ function renderBox(b: Box): string {
     : b.y + b.h / 2 - (b.sublabel ? 8 : 0);
   const sublabelY = labelBelow ? b.y + b.h - 4 : b.y + b.h / 2 + 12;
   return `<g class="box" data-id="${b.id}">
-    ${renderShape(b, "#ffffff", stroke, sw, isConnectSource)}
+    ${renderShape(b, T.boxFill, stroke, sw, isConnectSource)}
     <text class="box-label" x="${b.x + b.w / 2}"
           y="${labelY}"
           text-anchor="middle" dominant-baseline="middle">${esc(b.label)}</text>
@@ -1450,7 +1527,8 @@ function shapeIconSvg(shape: Shape): string {
     id: "icon", label: "", sublabel: "", shape,
     x: 5, y: 5, w: 42, h: 22,
   };
-  return `<svg viewBox="0 0 52 32" width="52" height="32">${renderShape(iconBox, "white", "#54524c", 1.2)}</svg>`;
+  const T = activeCanvasTokens;
+  return `<svg viewBox="0 0 52 32" width="52" height="32">${renderShape(iconBox, T.boxFill, T.boxStroke, 1.2)}</svg>`;
 }
 
 function renderConnector(c: Connector): string {
@@ -1464,7 +1542,7 @@ function renderConnector(c: Connector): string {
   const start = rectBoundary(from, toCx, toCy);
   const end = rectBoundary(to, fromCx, fromCy);
   const sel = c.id === selectedConnectorId;
-  const stroke = sel ? "#3b82f6" : "#54524c";
+  const stroke = sel ? "#3b82f6" : activeCanvasTokens.connectorStroke;
   const sw = sel ? 2 : 1.5;
   const marker = sel ? "arrow-sel" : "arrow";
   return `<g class="connector" data-id="${c.id}">
