@@ -182,6 +182,8 @@ body { min-height: 100vh; }
   gap: 2px;
 }
 
+.field[hidden] { display: none; }
+
 .field > span {
   font-size: 9.5px;
   color: var(--mute);
@@ -516,6 +518,8 @@ body { min-height: 100vh; }
   display: flex;
   justify-content: flex-end;
 }
+
+.inspector-footer[hidden] { display: none; }
 
 /* ---------------- Flash toast ---------------- */
 
