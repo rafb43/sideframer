@@ -552,7 +552,24 @@ function wireEvents(): void {
     if (!box) return;
     box.shape = btn.dataset.shape as Shape;
     render();
+    // Hand focus back to the label so the user can keep typing without
+    // having to click the input again after picking a shape.
+    boxLabelInput.focus();
+    boxLabelInput.select();
   });
+
+  // Backspace/Delete in the label input with an empty value deletes the box,
+  // matching the shortcut you'd otherwise hit with the canvas focused.
+  const onLabelDeleteKey = (e: KeyboardEvent) => {
+    if (e.key !== "Backspace" && e.key !== "Delete") return;
+    const input = e.currentTarget as HTMLInputElement;
+    if (input.value !== "") return;
+    if (selectedCenter) return; // center can't be deleted
+    if (!selectedId) return;
+    e.preventDefault();
+    deleteSelected();
+  };
+  boxLabelInput.addEventListener("keydown", onLabelDeleteKey);
 
   modeSeg.addEventListener("click", (e) => {
     const btn = (e.target as Element).closest("button[data-mode]") as HTMLButtonElement | null;
