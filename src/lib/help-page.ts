@@ -35,7 +35,8 @@ const SECTIONS: Section[] = [
     shortcuts: [
       { keys: ["click"], desc: "add a box on the empty canvas (or clear selection)" },
       { keys: ["click box"], desc: "select a box (focus moves to its label)" },
-      { keys: ["drag"], desc: "move a selected box" },
+      { keys: ["click center"], desc: "edit center label/sublabel (drag to reposition)" },
+      { keys: ["drag"], desc: "move a selected box or the center" },
       { keys: ["delete", "backspace"], desc: "remove the selected box" },
     ],
   },

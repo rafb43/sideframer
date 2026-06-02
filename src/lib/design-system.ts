@@ -215,7 +215,7 @@ function sectionFooters(): string {
   return ds("footer · brand footer", "Status / hint line, then a thin brand strip.", `
     <div class="ds-preview">
       <footer class="shell-footer" style="height:32px">
-        <span class="hint">draw — click empty canvas to add a box · drag to move · click a box to edit · esc / g / v / c switch modes</span>
+        <span class="hint">draw — click empty canvas to add a box · drag to move · click center to edit/move it · esc / g / v / c switch modes</span>
         <span class="footer-status">7 boxes · 4 connectors</span>
       </footer>
       <div class="brand-footer" style="height:22px">

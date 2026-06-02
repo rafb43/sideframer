@@ -50,6 +50,8 @@ interface DiagramState {
   scene: string;
   centerLabel: string;
   centerSublabel: string;
+  centerX: number;
+  centerY: number;
   background: Background;
   gradientFrom: string;
   gradientTo: string;
@@ -69,8 +71,9 @@ const CANVAS_H = 1000;
 const PAD = 88;
 const CENTER_W = 360;
 const CENTER_H = 200;
-const CENTER_X = (CANVAS_W - CENTER_W) / 2;
-const CENTER_Y = (CANVAS_H - CENTER_H) / 2;
+const CENTER_X_DEFAULT = (CANVAS_W - CENTER_W) / 2;
+const CENTER_Y_DEFAULT = (CANVAS_H - CENTER_H) / 2;
+const CENTER_SHAPE: Shape = "subprocess";
 const DEFAULT_BOX_W = 170;
 const DEFAULT_BOX_H = 64;
 
@@ -80,6 +83,8 @@ const state: DiagramState = {
   scene: "perspective",
   centerLabel: "the system",
   centerSublabel: "",
+  centerX: CENTER_X_DEFAULT,
+  centerY: CENTER_Y_DEFAULT,
   background: "grid",
   gradientFrom: DEFAULT_GRADIENT_FROM,
   gradientTo: DEFAULT_GRADIENT_TO,
@@ -89,6 +94,7 @@ const state: DiagramState = {
 
 let selectedId: string | null = null;
 let selectedConnectorId: string | null = null;
+let selectedCenter = false;
 let dragState: { id: string; offsetX: number; offsetY: number; moved: boolean } | null = null;
 let currentMode: Mode = "draw";
 let connectFrom: string | null = null;
@@ -104,8 +110,8 @@ let shellEl!: HTMLElement;
 let canvas!: HTMLDivElement;
 let inspector!: HTMLElement;
 let sceneInput!: HTMLInputElement;
-let centerLabelInput!: HTMLInputElement;
-let centerSublabelInput!: HTMLInputElement;
+let shapeField!: HTMLElement;
+let inspectorFooter!: HTMLElement;
 let boxLabelInput!: HTMLInputElement;
 let boxSublabelInput!: HTMLInputElement;
 let bgSelect!: HTMLSelectElement;
@@ -215,6 +221,14 @@ function normalizeState(): void {
   delete (state as unknown as { theme?: string }).theme;
   if (!isHexColor(state.gradientFrom)) state.gradientFrom = DEFAULT_GRADIENT_FROM;
   if (!isHexColor(state.gradientTo)) state.gradientTo = DEFAULT_GRADIENT_TO;
+  if (typeof state.centerX !== "number" || !Number.isFinite(state.centerX)) state.centerX = CENTER_X_DEFAULT;
+  if (typeof state.centerY !== "number" || !Number.isFinite(state.centerY)) state.centerY = CENTER_Y_DEFAULT;
+  clampCenter();
+}
+
+function clampCenter(): void {
+  state.centerX = Math.max(PAD + 8, Math.min(CANVAS_W - PAD - CENTER_W - 8, state.centerX));
+  state.centerY = Math.max(PAD + 8, Math.min(CANVAS_H - PAD - CENTER_H - 8, state.centerY));
 }
 
 function isHexColor(v: unknown): v is string {
@@ -266,14 +280,6 @@ function bootDiagrammer(): void {
             <label class="field">
               <span>scene</span>
               <input id="scene-input" type="text" />
-            </label>
-            <label class="field">
-              <span>center label</span>
-              <input id="center-label-input" type="text" />
-            </label>
-            <label class="field">
-              <span>center sublabel</span>
-              <input id="center-sublabel-input" type="text" />
             </label>
             <label class="field">
               <span>background</span>
@@ -337,7 +343,7 @@ function bootDiagrammer(): void {
     </div>
 
     <aside class="inspector" id="inspector" hidden>
-      <div class="field">
+      <div class="field" id="shape-field">
         <span>shape</span>
         <div class="shape-grid" id="shape-grid">
           ${SHAPES.map((s) => `<button type="button" data-shape="${s}" title="${s}">${shapeIconSvg(s)}</button>`).join("")}
@@ -351,7 +357,7 @@ function bootDiagrammer(): void {
         <span>sublabel</span>
         <input id="box-sublabel-input" type="text" />
       </label>
-      <div class="inspector-footer">
+      <div class="inspector-footer" id="inspector-footer">
         <button id="box-delete" class="btn danger">delete</button>
       </div>
     </aside>
@@ -361,8 +367,8 @@ function bootDiagrammer(): void {
   canvas = document.querySelector<HTMLDivElement>("#canvas")!;
   inspector = document.querySelector<HTMLElement>("#inspector")!;
   sceneInput = document.querySelector<HTMLInputElement>("#scene-input")!;
-  centerLabelInput = document.querySelector<HTMLInputElement>("#center-label-input")!;
-  centerSublabelInput = document.querySelector<HTMLInputElement>("#center-sublabel-input")!;
+  shapeField = document.querySelector<HTMLElement>("#shape-field")!;
+  inspectorFooter = document.querySelector<HTMLElement>("#inspector-footer")!;
   boxLabelInput = document.querySelector<HTMLInputElement>("#box-label-input")!;
   boxSublabelInput = document.querySelector<HTMLInputElement>("#box-sublabel-input")!;
   bgSelect = document.querySelector<HTMLSelectElement>("#bg-select")!;
@@ -385,8 +391,6 @@ function bootDiagrammer(): void {
   normalizeState();
 
   sceneInput.value = state.scene;
-  centerLabelInput.value = state.centerLabel;
-  centerSublabelInput.value = state.centerSublabel;
   bgSelect.value = state.background;
   gradientFromInput.value = state.gradientFrom;
   gradientToInput.value = state.gradientTo;
@@ -424,7 +428,7 @@ function bootDiagrammer(): void {
 const HINTS: Record<Mode, string> = {
   gallery: "gallery — saved diagrams · click a tile to open · g / v / d / c switch modes",
   view: "view — read-only · g / v / d / c switch modes",
-  draw: "draw — click empty canvas to add a box · drag to move · click a box to edit · esc / g / v / c switch modes",
+  draw: "draw — click empty canvas to add a box · drag to move · click center to edit/move it · esc / g / v / c switch modes",
   connect: "connect — click two boxes (or the center) to link them · esc / g / v / d switch modes",
 };
 
@@ -434,6 +438,7 @@ function setMode(m: Mode): void {
   connectFrom = null;
   if (m !== "draw") {
     selectedId = null;
+    selectedCenter = false;
     inspector.hidden = true;
   }
   if (m === "view" || m === "gallery") selectedConnectorId = null;
@@ -524,8 +529,6 @@ function updateModeUI(): void {
 
 function wireEvents(): void {
   sceneInput.addEventListener("input", () => { state.scene = sceneInput.value; render(); });
-  centerLabelInput.addEventListener("input", () => { state.centerLabel = centerLabelInput.value; render(); });
-  centerSublabelInput.addEventListener("input", () => { state.centerSublabel = centerSublabelInput.value; render(); });
   bgSelect.addEventListener("change", () => {
     state.background = bgSelect.value as Background;
     syncGradientControls();
@@ -680,14 +683,13 @@ function loadDiagramState(newState: Partial<DiagramState>): void {
   Object.assign(state, newState);
   normalizeState();
   sceneInput.value = state.scene;
-  centerLabelInput.value = state.centerLabel;
-  centerSublabelInput.value = state.centerSublabel;
   bgSelect.value = state.background;
   gradientFromInput.value = state.gradientFrom;
   gradientToInput.value = state.gradientTo;
   syncGradientControls();
   selectedId = null;
   selectedConnectorId = null;
+  selectedCenter = false;
   connectFrom = null;
   render();
 }
@@ -776,7 +778,9 @@ async function populatePreview(li: HTMLLIElement, uri: string, token: number): P
 function buildPreviewSVG(d: Partial<DiagramState>): string {
   const boxes: Box[] = Array.isArray(d.boxes) ? d.boxes : [];
   const connectors: Connector[] = Array.isArray(d.connectors) ? d.connectors : [];
-  const center = { x: CENTER_X, y: CENTER_Y, w: CENTER_W, h: CENTER_H };
+  const cx = typeof d.centerX === "number" ? d.centerX : CENTER_X_DEFAULT;
+  const cy = typeof d.centerY === "number" ? d.centerY : CENTER_Y_DEFAULT;
+  const center = { x: cx, y: cy, w: CENTER_W, h: CENTER_H };
   const endpoint = (id: string) => {
     if (id === CENTER_ID) return center;
     const b = boxes.find((x) => x.id === id);
@@ -822,7 +826,8 @@ function esc(s: string): string {
 }
 
 function isInCenter(x: number, y: number): boolean {
-  return x >= CENTER_X && x <= CENTER_X + CENTER_W && y >= CENTER_Y && y <= CENTER_Y + CENTER_H;
+  return x >= state.centerX && x <= state.centerX + CENTER_W &&
+    y >= state.centerY && y <= state.centerY + CENTER_H;
 }
 
 function isInFrame(x: number, y: number): boolean {
@@ -843,7 +848,7 @@ function rectsOverlap(
 
 function findEndpoint(id: string): { x: number; y: number; w: number; h: number } | null {
   if (id === CENTER_ID) {
-    return { x: CENTER_X, y: CENTER_Y, w: CENTER_W, h: CENTER_H };
+    return { x: state.centerX, y: state.centerY, w: CENTER_W, h: CENTER_H };
   }
   const box = state.boxes.find((b) => b.id === id);
   if (!box) return null;
@@ -894,8 +899,10 @@ function render(): void {
 function buildSVG(): string {
   const sceneStr = state.scene ? `scene:  ${esc(state.scene)}` : "";
   const centerConnectSource = currentMode === "connect" && connectFrom === CENTER_ID;
-  const centerStroke = centerConnectSource ? "#10b981" : "#2a2a28";
-  const centerDash = centerConnectSource ? ` stroke-dasharray="6 4"` : "";
+  const centerSel = selectedCenter;
+  const centerStroke = centerSel ? "#3b82f6" : centerConnectSource ? "#10b981" : "#2a2a28";
+  const centerSw = centerSel ? 3 : 2.5;
+  const centerDashed = centerConnectSource;
   return `
 <svg id="svg-root" class="mode-${currentMode}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}" width="${CANVAS_W}" height="${CANVAS_H}">
   <style>
@@ -933,13 +940,16 @@ function buildSVG(): string {
   ${state.connectors.map(renderConnector).filter(Boolean).join("\n")}
 
   <g class="center" data-target="center" data-id="${CENTER_ID}">
-    <rect x="${CENTER_X}" y="${CENTER_Y}" width="${CENTER_W}" height="${CENTER_H}"
-          fill="#ffffff" stroke="${centerStroke}" stroke-width="2.5" rx="8"${centerDash}/>
-    <text class="center-label" x="${CENTER_X + CENTER_W / 2}"
-          y="${CENTER_Y + CENTER_H / 2 - (state.centerSublabel ? 10 : 0)}"
+    ${renderShape(
+      { id: CENTER_ID, label: "", sublabel: "", shape: CENTER_SHAPE,
+        x: state.centerX, y: state.centerY, w: CENTER_W, h: CENTER_H },
+      "#ffffff", centerStroke, centerSw, centerDashed,
+    )}
+    <text class="center-label" x="${state.centerX + CENTER_W / 2}"
+          y="${state.centerY + CENTER_H / 2 - (state.centerSublabel ? 10 : 0)}"
           text-anchor="middle" dominant-baseline="middle">${esc(state.centerLabel)}</text>
     ${state.centerSublabel
-      ? `<text class="center-sublabel" x="${CENTER_X + CENTER_W / 2}" y="${CENTER_Y + CENTER_H / 2 + 18}"
+      ? `<text class="center-sublabel" x="${state.centerX + CENTER_W / 2}" y="${state.centerY + CENTER_H / 2 + 18}"
             text-anchor="middle" dominant-baseline="middle">${esc(state.centerSublabel)}</text>`
       : ""}
   </g>
@@ -961,13 +971,15 @@ function renderBackground(): string {
         </defs>
         <rect width="100%" height="100%" fill="#fbfaf6"/>
         <rect width="100%" height="100%" fill="url(#bg-grid)"/>`;
-    case "sections":
+    case "sections": {
+      const cx = state.centerX;
       return `
         <rect width="100%" height="100%" fill="#fbfaf6"/>
-        <rect x="0" y="0" width="${CENTER_X}" height="${CANVAS_H}" fill="#f4eddc" opacity="0.55"/>
-        <rect x="${CENTER_X + CENTER_W}" y="0" width="${CANVAS_W - CENTER_X - CENTER_W}" height="${CANVAS_H}" fill="#f4eddc" opacity="0.55"/>
-        <line x1="${CENTER_X}" y1="${PAD}" x2="${CENTER_X}" y2="${CANVAS_H - PAD}" stroke="#d4ceb8" stroke-width="1" stroke-dasharray="3 6"/>
-        <line x1="${CENTER_X + CENTER_W}" y1="${PAD}" x2="${CENTER_X + CENTER_W}" y2="${CANVAS_H - PAD}" stroke="#d4ceb8" stroke-width="1" stroke-dasharray="3 6"/>`;
+        <rect x="0" y="0" width="${cx}" height="${CANVAS_H}" fill="#f4eddc" opacity="0.55"/>
+        <rect x="${cx + CENTER_W}" y="0" width="${CANVAS_W - cx - CENTER_W}" height="${CANVAS_H}" fill="#f4eddc" opacity="0.55"/>
+        <line x1="${cx}" y1="${PAD}" x2="${cx}" y2="${CANVAS_H - PAD}" stroke="#d4ceb8" stroke-width="1" stroke-dasharray="3 6"/>
+        <line x1="${cx + CENTER_W}" y1="${PAD}" x2="${cx + CENTER_W}" y2="${CANVAS_H - PAD}" stroke="#d4ceb8" stroke-width="1" stroke-dasharray="3 6"/>`;
+    }
     case "diagonals":
       return `
         <rect width="100%" height="100%" fill="#fbfaf6"/>
@@ -1151,6 +1163,7 @@ function onMouseDown(e: MouseEvent): void {
     const box = state.boxes.find((b) => b.id === id);
     if (!box) return;
     selectedId = id;
+    selectedCenter = false;
     selectedConnectorId = null;
     dragState = { id, offsetX: x - box.x, offsetY: y - box.y, moved: false };
     document.addEventListener("mousemove", onMouseMove);
@@ -1164,16 +1177,26 @@ function onMouseDown(e: MouseEvent): void {
   if (connectorGroup) {
     selectedConnectorId = connectorGroup.dataset.id!;
     selectedId = null;
+    selectedCenter = false;
     render();
     return;
   }
 
   if (centerGroup) {
+    selectedCenter = true;
     selectedId = null;
     selectedConnectorId = null;
+    dragState = {
+      id: CENTER_ID,
+      offsetX: x - state.centerX,
+      offsetY: y - state.centerY,
+      moved: false,
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
     render();
-    centerLabelInput.focus();
-    centerLabelInput.select();
+    boxLabelInput.focus();
+    boxLabelInput.select();
     return;
   }
 
@@ -1181,9 +1204,10 @@ function onMouseDown(e: MouseEvent): void {
   // only a click while nothing is selected actually creates a new box. That
   // way the inspector "close" gesture is just a click off the box and doesn't
   // immediately drop a new box at the same coordinates.
-  if (selectedId !== null || selectedConnectorId !== null) {
+  if (selectedId !== null || selectedConnectorId !== null || selectedCenter) {
     selectedId = null;
     selectedConnectorId = null;
+    selectedCenter = false;
     render();
     return;
   }
@@ -1201,7 +1225,7 @@ function onMouseDown(e: MouseEvent): void {
     h: DEFAULT_BOX_H,
   };
   clampToFrame(newBox);
-  if (rectsOverlap(newBox, { x: CENTER_X, y: CENTER_Y, w: CENTER_W, h: CENTER_H })) return;
+  if (rectsOverlap(newBox, { x: state.centerX, y: state.centerY, w: CENTER_W, h: CENTER_H })) return;
 
   state.boxes.push(newBox);
   selectedId = newBox.id;
@@ -1228,6 +1252,14 @@ function onMouseMove(e: MouseEvent): void {
   if (!dragState) return;
   const svgEl = document.querySelector<SVGSVGElement>("#svg-root")!;
   const { x, y } = svgPoint(svgEl, e);
+  if (dragState.id === CENTER_ID) {
+    state.centerX = x - dragState.offsetX;
+    state.centerY = y - dragState.offsetY;
+    clampCenter();
+    dragState.moved = true;
+    render();
+    return;
+  }
   const box = state.boxes.find((b) => b.id === dragState!.id);
   if (!box) return;
   box.x = x - dragState.offsetX;
@@ -1246,7 +1278,20 @@ function onMouseUp(): void {
 // ---------------- Inspector ----------------
 
 function syncInspector(): void {
-  if (currentMode !== "draw" || !selectedId) {
+  if (currentMode !== "draw") {
+    inspector.hidden = true;
+    return;
+  }
+  if (selectedCenter) {
+    inspector.hidden = false;
+    shapeField.hidden = true;
+    inspectorFooter.hidden = true;
+    if (document.activeElement !== boxLabelInput) boxLabelInput.value = state.centerLabel;
+    if (document.activeElement !== boxSublabelInput) boxSublabelInput.value = state.centerSublabel;
+    positionInspector();
+    return;
+  }
+  if (!selectedId) {
     inspector.hidden = true;
     return;
   }
@@ -1256,6 +1301,8 @@ function syncInspector(): void {
     return;
   }
   inspector.hidden = false;
+  shapeField.hidden = false;
+  inspectorFooter.hidden = false;
   if (document.activeElement !== boxLabelInput) boxLabelInput.value = box.label;
   if (document.activeElement !== boxSublabelInput) boxSublabelInput.value = box.sublabel;
   shapeGrid.querySelectorAll("button[data-shape]").forEach((b) => {
@@ -1269,10 +1316,14 @@ const INSPECTOR_W = 220;
 const INSPECTOR_GAP = 10;
 
 function positionInspector(): void {
-  if (!inspector || inspector.hidden || !selectedId) return;
-  const boxEl = document.querySelector(`g.box[data-id="${CSS.escape(selectedId)}"]`) as SVGGElement | null;
-  if (!boxEl) return;
-  const rect = boxEl.getBoundingClientRect();
+  if (!inspector || inspector.hidden) return;
+  const target = selectedCenter
+    ? document.querySelector("g.center") as SVGGElement | null
+    : selectedId
+      ? document.querySelector(`g.box[data-id="${CSS.escape(selectedId)}"]`) as SVGGElement | null
+      : null;
+  if (!target) return;
+  const rect = target.getBoundingClientRect();
   const insRect = inspector.getBoundingClientRect();
   const w = insRect.width || INSPECTOR_W;
   const h = insRect.height || 260;
@@ -1299,6 +1350,12 @@ function positionInspector(): void {
 }
 
 function updateSelectedFromInputs(): void {
+  if (selectedCenter) {
+    state.centerLabel = boxLabelInput.value;
+    state.centerSublabel = boxSublabelInput.value;
+    render();
+    return;
+  }
   if (!selectedId) return;
   const box = state.boxes.find((b) => b.id === selectedId);
   if (!box) return;
@@ -1328,14 +1385,15 @@ function newDiagram(): void {
   state.scene = "perspective";
   state.centerLabel = "the system";
   state.centerSublabel = "";
+  state.centerX = CENTER_X_DEFAULT;
+  state.centerY = CENTER_Y_DEFAULT;
   state.boxes = [];
   state.connectors = [];
   selectedId = null;
   selectedConnectorId = null;
+  selectedCenter = false;
   connectFrom = null;
   sceneInput.value = state.scene;
-  centerLabelInput.value = state.centerLabel;
-  centerSublabelInput.value = state.centerSublabel;
   setMode("draw");
 }
 
@@ -1344,9 +1402,11 @@ function newDiagram(): void {
 async function copyPNG(): Promise<void> {
   const prevSelected = selectedId;
   const prevSelectedConnector = selectedConnectorId;
+  const prevSelectedCenter = selectedCenter;
   const prevConnectFrom = connectFrom;
   selectedId = null;
   selectedConnectorId = null;
+  selectedCenter = false;
   connectFrom = null;
   render();
   const exportSvg = document.querySelector<SVGSVGElement>("#svg-root")!;
@@ -1367,6 +1427,7 @@ async function copyPNG(): Promise<void> {
   const xml = new XMLSerializer().serializeToString(exportClone);
   selectedId = prevSelected;
   selectedConnectorId = prevSelectedConnector;
+  selectedCenter = prevSelectedCenter;
   connectFrom = prevConnectFrom;
 
   const pngPromise: Promise<Blob> = (async () => {
