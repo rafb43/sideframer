@@ -1297,7 +1297,21 @@ async function copyPNG(): Promise<void> {
   connectFrom = null;
   render();
   const exportSvg = document.querySelector<SVGSVGElement>("#svg-root")!;
-  const xml = new XMLSerializer().serializeToString(exportSvg);
+  // Clone so we can stamp explicit width/height for high-DPI rasterization
+  // without mutating the live DOM. The intrinsic size we give the SVG element
+  // is what <img>.decode() will use as the raster source size — bigger here
+  // means a sharper PNG, since drawImage onto a same-sized canvas avoids any
+  // upscaling pass.
+  const PNG_SCALE = 3;
+  const exportW = CANVAS_W * PNG_SCALE;
+  const exportH = CANVAS_H * PNG_SCALE;
+  const exportClone = exportSvg.cloneNode(true) as SVGSVGElement;
+  exportClone.setAttribute("width", String(exportW));
+  exportClone.setAttribute("height", String(exportH));
+  if (!exportClone.getAttribute("xmlns")) {
+    exportClone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  }
+  const xml = new XMLSerializer().serializeToString(exportClone);
   selectedId = prevSelected;
   selectedConnectorId = prevSelectedConnector;
   connectFrom = prevConnectFrom;
@@ -1307,15 +1321,19 @@ async function copyPNG(): Promise<void> {
     const url = URL.createObjectURL(svgBlob);
     try {
       const img = new Image();
+      img.width = exportW;
+      img.height = exportH;
       img.src = url;
       await img.decode();
       const c = document.createElement("canvas");
-      c.width = CANVAS_W;
-      c.height = CANVAS_H;
+      c.width = exportW;
+      c.height = exportH;
       const ctx = c.getContext("2d")!;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
       ctx.fillStyle = "#fbfaf6";
       ctx.fillRect(0, 0, c.width, c.height);
-      ctx.drawImage(img, 0, 0, CANVAS_W, CANVAS_H);
+      ctx.drawImage(img, 0, 0, exportW, exportH);
       return await new Promise<Blob>((resolve, reject) => {
         c.toBlob((b) => (b ? resolve(b) : reject(new Error("canvas.toBlob failed"))), "image/png");
       });
