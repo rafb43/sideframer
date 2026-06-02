@@ -1123,14 +1123,16 @@ async function refreshStylesPane(): Promise<void> {
       ).join("");
       li.innerHTML = `
         <div class="style-row-meta">
-          <span class="style-row-name">
-            ${esc(rec.name)}
+          <div class="style-row-line1">
             <span class="style-row-kind kind-${kind}">${kind}</span>
+            <span class="style-row-swatches">${swatches}</span>
+          </div>
+          <div class="style-row-name">
+            ${esc(rec.name)}
             ${boundAs ? `<span class="style-row-bound">${esc(boundAs)}</span>` : ""}
-          </span>
-          <span class="style-row-uri">${esc(rec.uri)}</span>
+          </div>
+          <div class="style-row-uri">${esc(rec.uri)}</div>
         </div>
-        <div class="style-row-swatches">${swatches}</div>
         <div class="style-row-actions">
           <button class="btn-mini" type="button" data-action="apply" title="bind to current diagram">↻ apply</button>
           <button class="btn-mini" type="button" data-action="edit">edit</button>

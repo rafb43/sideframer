@@ -457,6 +457,17 @@ body { min-height: 100vh; }
   flex: 1 1 auto;
 }
 
+.style-row-line1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Push swatches to the right of line 1, away from the kind chip. */
+.style-row-line1 .style-row-swatches {
+  margin-left: auto;
+}
+
 .style-row-name {
   font-size: 13px;
   color: var(--ink);
