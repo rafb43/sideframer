@@ -985,15 +985,26 @@ function renderBackground(): string {
         <rect width="100%" height="100%" fill="#fbfaf6"/>
         <line x1="${PAD}" y1="${PAD}" x2="${CANVAS_W - PAD}" y2="${CANVAS_H - PAD}" stroke="#dcd6c4" stroke-width="1"/>
         <line x1="${CANVAS_W - PAD}" y1="${PAD}" x2="${PAD}" y2="${CANVAS_H - PAD}" stroke="#dcd6c4" stroke-width="1"/>`;
-    case "gradient":
+    case "gradient": {
+      const gcx = state.centerX + CENTER_W / 2;
+      const gcy = state.centerY + CENTER_H / 2;
+      // Reach the farthest canvas corner so the falloff covers the whole frame
+      // regardless of where the user dragged the center.
+      const gr = Math.max(
+        Math.hypot(gcx, gcy),
+        Math.hypot(CANVAS_W - gcx, gcy),
+        Math.hypot(gcx, CANVAS_H - gcy),
+        Math.hypot(CANVAS_W - gcx, CANVAS_H - gcy),
+      );
       return `
         <defs>
-          <radialGradient id="bg-grad" cx="50%" cy="50%" r="65%">
+          <radialGradient id="bg-grad" cx="${gcx}" cy="${gcy}" r="${gr}" fx="${gcx}" fy="${gcy}" gradientUnits="userSpaceOnUse">
             <stop offset="0%" stop-color="${esc(state.gradientFrom)}"/>
             <stop offset="100%" stop-color="${esc(state.gradientTo)}"/>
           </radialGradient>
         </defs>
         <rect width="100%" height="100%" fill="url(#bg-grad)"/>`;
+    }
   }
 }
 
