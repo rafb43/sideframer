@@ -1,6 +1,6 @@
 import "./style.css";
 import { createClientRig, DiagramStore } from "./lib/diagram-store.ts";
-import { createStyleRig, StyleStore } from "./lib/style-store.ts";
+import { createStyleRig, type StylePack, StyleStore } from "./lib/style-store.ts";
 import { createNamespace } from "./lib/sluggify.ts";
 // design-system and help pages are dynamic-imported on demand (see setPage)
 // to keep the diagrammer bundle light.
@@ -44,8 +44,23 @@ interface Box {
 
 type Background = "clean" | "grid" | "sections" | "diagonals" | "gradient";
 
-type Mode = "gallery" | "view" | "draw" | "connect";
-const MODES: Mode[] = ["gallery", "view", "draw", "connect"];
+type Mode = "gallery" | "view" | "draw" | "connect" | "styles";
+const MODES: Mode[] = ["gallery", "view", "draw", "connect", "styles"];
+
+// Tokens the style editor exposes. Adding to this list immediately surfaces
+// a new row in the editor. Defaults match the values declared in style.css
+// — used as the initial values for newly created packs.
+const STYLE_TOKEN_DEFS: { name: string; label: string; default: string }[] = [
+  { name: "--bg", label: "background", default: "#fbfaf6" },
+  { name: "--panel", label: "panel", default: "#fffffe" },
+  { name: "--line", label: "line", default: "#d4d0c4" },
+  { name: "--ink", label: "ink", default: "#2a2a28" },
+  { name: "--mute", label: "muted ink", default: "#6b685f" },
+  { name: "--accent", label: "accent", default: "#3b82f6" },
+  { name: "--danger", label: "danger", default: "#c54a3b" },
+  { name: "--warn", label: "warn", default: "#b27800" },
+  { name: "--ok", label: "ok", default: "#2f7d4f" },
+];
 
 type Page = "design-system" | "help";
 const PAGES: Page[] = ["design-system", "help"];
@@ -145,6 +160,12 @@ let galleryList!: HTMLUListElement;
 let galleryEmpty!: HTMLDivElement;
 let galleryError!: HTMLDivElement;
 let galleryCount!: HTMLSpanElement;
+let stylesList!: HTMLUListElement;
+let stylesEmpty!: HTMLDivElement;
+let stylesError!: HTMLDivElement;
+let stylesCount!: HTMLSpanElement;
+let styleEditor!: HTMLElement;
+let stylePackSelect!: HTMLSelectElement;
 
 // ---------------- Persistence ----------------
 
@@ -318,9 +339,18 @@ function bootDiagrammer(): void {
               <span>to</span>
               <input id="gradient-to-input" type="color" />
             </label>
+            <label class="field">
+              <span>style pack</span>
+              <select id="style-pack-select"></select>
+            </label>
           </div>
           <div class="context-actions-group" data-mode="connect">
             <span class="ctx-note">click two boxes (or the center) to connect · click an arrow to select</span>
+          </div>
+          <div class="context-actions-group" data-mode="styles">
+            <button id="styles-new" class="btn-mini">+ new pack</button>
+            <button id="styles-refresh" class="btn-mini" title="refresh">↻ refresh</button>
+            <span class="ctx-note">edit a pack to set tokens · click ↻ apply to bind it to the current diagram</span>
           </div>
         </div>
 
@@ -335,6 +365,18 @@ function bootDiagrammer(): void {
               nothing saved yet — hit <kbd>save</kbd> on a diagram you like.
             </div>
             <div class="gallery-error" id="gallery-error" hidden></div>
+          </aside>
+          <aside id="styles-pane">
+            <div class="styles-pane-header">
+              <h2>style packs</h2>
+              <span class="styles-count" id="styles-count"></span>
+            </div>
+            <ul id="styles-list" class="styles-grid"></ul>
+            <div class="styles-empty" id="styles-empty" hidden>
+              no packs yet — click <kbd>+ new pack</kbd> to create one.
+            </div>
+            <div class="styles-error" id="styles-error" hidden></div>
+            <section class="style-editor" id="style-editor" hidden></section>
           </aside>
           <div id="canvas-pane">
             <div id="canvas"></div>
@@ -402,6 +444,12 @@ function bootDiagrammer(): void {
   galleryEmpty = document.querySelector<HTMLDivElement>("#gallery-empty")!;
   galleryError = document.querySelector<HTMLDivElement>("#gallery-error")!;
   galleryCount = document.querySelector<HTMLSpanElement>("#gallery-count")!;
+  stylesList = document.querySelector<HTMLUListElement>("#styles-list")!;
+  stylesEmpty = document.querySelector<HTMLDivElement>("#styles-empty")!;
+  stylesError = document.querySelector<HTMLDivElement>("#styles-error")!;
+  stylesCount = document.querySelector<HTMLSpanElement>("#styles-count")!;
+  styleEditor = document.querySelector<HTMLElement>("#style-editor")!;
+  stylePackSelect = document.querySelector<HTMLSelectElement>("#style-pack-select")!;
   pageOverlay = document.querySelector<HTMLDivElement>("#page-overlay")!;
   pageBody = document.querySelector<HTMLDivElement>("#page-overlay-body")!;
   pageTitle = document.querySelector<HTMLElement>("#page-overlay-title")!;
@@ -422,6 +470,8 @@ function bootDiagrammer(): void {
   wireEvents();
   setMode(currentMode);
   render();
+  // Apply the bound style pack if the restored draft/hash carried one.
+  void applyStyleBinding(state.styleUri);
 
   // Restore overlay page from URL (e.g. landing on #p=design-system).
   const initialPage = decodePageFromHash();
@@ -445,14 +495,16 @@ function bootDiagrammer(): void {
 }
 
 const HINTS: Record<Mode, string> = {
-  gallery: "gallery — saved diagrams · click a tile to open · g / v / d / c switch modes",
-  view: "view — read-only · g / v / d / c switch modes",
-  draw: "draw — click empty canvas to add a box · drag to move · click center to edit/move it · esc / g / v / c switch modes",
-  connect: "connect — click two boxes (or the center) to link them · esc / g / v / d switch modes",
+  gallery: "gallery — saved diagrams · click a tile to open · g / v / d / c / s switch modes",
+  view: "view — read-only · g / v / d / c / s switch modes",
+  draw: "draw — click empty canvas to add a box · drag to move · click center to edit/move it · esc / g / v / c / s switch modes",
+  connect: "connect — click two boxes (or the center) to link them · esc / g / v / d / s switch modes",
+  styles: "styles — pick a pack to edit · click ↻ apply to bind the current diagram · g / v / d / c switch modes",
 };
 
 function setMode(m: Mode): void {
   const modeChanged = m !== currentMode;
+  const prevMode = currentMode;
   currentMode = m;
   connectFrom = null;
   if (m !== "draw") {
@@ -473,6 +525,11 @@ function setMode(m: Mode): void {
     }
   }
   if (m === "gallery") refreshGallery();
+  if (m === "styles") refreshStylesPane();
+  if (m === "draw") refreshStylePackPicker();
+  // Leaving styles: discard any unsaved live-preview edits by closing the
+  // editor, which re-applies the bound pack.
+  if (prevMode === "styles" && m !== "styles") closeStyleEditor();
   render();
 }
 
@@ -603,6 +660,38 @@ function wireEvents(): void {
   document.querySelector<HTMLButtonElement>("#gallery-refresh")!
     .addEventListener("click", () => refreshGallery());
 
+  document.querySelector<HTMLButtonElement>("#styles-refresh")!
+    .addEventListener("click", () => refreshStylesPane());
+  document.querySelector<HTMLButtonElement>("#styles-new")!
+    .addEventListener("click", newStylePack);
+
+  stylesList.addEventListener("click", async (e) => {
+    const li = (e.target as Element).closest("li.style-row[data-uri]") as HTMLLIElement | null;
+    if (!li || !li.dataset.uri) return;
+    const action = ((e.target as Element)
+      .closest("button[data-action]") as HTMLButtonElement | null)?.dataset.action;
+    const uri = li.dataset.uri;
+    if (action === "apply") {
+      await applyPackToDiagram(uri);
+      return;
+    }
+    try {
+      const rec = await styleStore.load(uri);
+      if (!rec) { showMessage("pack not found", "warn"); return; }
+      openStyleEditor(uri, rec.pack);
+    } catch (err) {
+      console.warn("load pack failed", err);
+      showMessage("couldn't load pack", "warn");
+    }
+  });
+
+  stylePackSelect.addEventListener("change", () => {
+    const val = stylePackSelect.value;
+    state.styleUri = val || null;
+    saveDraft();
+    void applyStyleBinding(state.styleUri);
+  });
+
   document.querySelector<HTMLButtonElement>("#save-diagram")!
     .addEventListener("click", async () => {
       const btn = document.querySelector<HTMLButtonElement>("#save-diagram")!;
@@ -676,6 +765,7 @@ function wireEvents(): void {
       if (e.key === "v" || e.key === "V") { setMode("view"); return; }
       if (e.key === "d" || e.key === "D") { setMode("draw"); return; }
       if (e.key === "c" || e.key === "C") { setMode("connect"); return; }
+      if (e.key === "s" || e.key === "S") { setMode("styles"); return; }
     }
   });
 
@@ -864,6 +954,185 @@ async function refreshGallery(): Promise<void> {
     galleryEmpty.hidden = true;
     galleryCount.textContent = "";
     console.warn("gallery refresh failed", e);
+  }
+}
+
+// ---------------- Styles mode ----------------
+//
+// State for the styles pane. The currently-edited pack is held in memory so
+// per-token color inputs can mutate it without round-tripping through b3nd
+// — save only commits on explicit save. While the editor is open we live-
+// preview tokens by writing them to `:root`; leaving the mode (or hitting
+// cancel) re-applies the bound pack's tokens to discard the preview.
+
+let stylesToken = 0;
+let editedPack: StylePack | null = null;
+
+async function refreshStylesPane(): Promise<void> {
+  if (!stylesError) return;
+  stylesError.hidden = true;
+  const token = ++stylesToken;
+  try {
+    const items = await styleStore.list();
+    if (token !== stylesToken) return;
+    stylesList.innerHTML = "";
+    stylesEmpty.hidden = items.length > 0;
+    stylesCount.textContent = items.length > 0 ? `${items.length} pack${items.length === 1 ? "" : "s"}` : "";
+    const records = await Promise.all(
+      items.map(({ uri }) =>
+        styleStore.load(uri).catch(() => null as null)
+      ),
+    );
+    if (token !== stylesToken) return;
+    records.forEach((rec, i) => {
+      if (!rec) return;
+      const li = document.createElement("li");
+      li.className = "style-row";
+      li.dataset.uri = rec.uri;
+      if (rec.uri === state.styleUri) li.classList.add("is-bound");
+      const tokens = rec.pack.tokens || {};
+      const swatches = Object.entries(tokens).slice(0, 8).map(([n, v]) =>
+        `<span class="style-swatch" style="background:${esc(v)}" title="${esc(n)}: ${esc(v)}"></span>`
+      ).join("");
+      li.innerHTML = `
+        <div class="style-row-meta">
+          <span class="style-row-name">${esc(rec.name)}${rec.uri === state.styleUri ? ' <span class="style-row-bound">bound</span>' : ""}</span>
+          <span class="style-row-uri">${esc(rec.uri)}</span>
+        </div>
+        <div class="style-row-swatches">${swatches}</div>
+        <div class="style-row-actions">
+          <button class="btn-mini" type="button" data-action="apply" title="bind to current diagram">↻ apply</button>
+          <button class="btn-mini" type="button" data-action="edit">edit</button>
+        </div>`;
+      void i;
+      stylesList.appendChild(li);
+    });
+  } catch (e) {
+    if (token !== stylesToken) return;
+    stylesError.hidden = false;
+    stylesError.textContent =
+      `couldn't reach storage server (${STORAGE_SERVER}). is it running? — npm run serve`;
+    stylesList.innerHTML = "";
+    stylesEmpty.hidden = true;
+    stylesCount.textContent = "";
+    console.warn("styles refresh failed", e);
+  }
+}
+
+function openStyleEditor(_uri: string | null, pack: StylePack): void {
+  // Deep-clone so live edits don't leak into the list's loaded record.
+  editedPack = { name: pack.name, tokens: { ...(pack.tokens || {}) } };
+  styleEditor.hidden = false;
+  styleEditor.innerHTML = `
+    <header class="style-editor-header">
+      <label class="field">
+        <span>pack name</span>
+        <input id="style-name-input" type="text" value="${esc(editedPack.name)}"/>
+      </label>
+      <div class="style-editor-actions">
+        <button class="btn" type="button" id="style-save">save</button>
+        <button class="btn" type="button" id="style-save-apply">save &amp; apply</button>
+        <button class="btn-mini" type="button" id="style-cancel">cancel</button>
+      </div>
+    </header>
+    <div class="style-token-grid">
+      ${STYLE_TOKEN_DEFS.map((t) => {
+        const v = editedPack!.tokens?.[t.name] ?? t.default;
+        return `
+          <label class="field field-color style-token-row">
+            <span>${esc(t.label)}<br><code>${esc(t.name)}</code></span>
+            <input type="color" data-token="${esc(t.name)}" value="${esc(v)}"/>
+          </label>`;
+      }).join("")}
+    </div>`;
+  // Live preview on every color change.
+  styleEditor.querySelectorAll<HTMLInputElement>("input[data-token]").forEach((inp) => {
+    document.documentElement.style.setProperty(inp.dataset.token!, inp.value);
+    inp.addEventListener("input", () => {
+      const name = inp.dataset.token!;
+      document.documentElement.style.setProperty(name, inp.value);
+      if (editedPack) {
+        if (!editedPack.tokens) editedPack.tokens = {};
+        editedPack.tokens[name] = inp.value;
+      }
+    });
+  });
+  const nameInput = styleEditor.querySelector<HTMLInputElement>("#style-name-input")!;
+  nameInput.addEventListener("input", () => {
+    if (editedPack) editedPack.name = nameInput.value;
+  });
+  document.querySelector<HTMLButtonElement>("#style-cancel")!
+    .addEventListener("click", () => { closeStyleEditor(); refreshStylesPane(); });
+  document.querySelector<HTMLButtonElement>("#style-save")!
+    .addEventListener("click", () => saveStyleEdit(false));
+  document.querySelector<HTMLButtonElement>("#style-save-apply")!
+    .addEventListener("click", () => saveStyleEdit(true));
+}
+
+function closeStyleEditor(): void {
+  styleEditor.hidden = true;
+  styleEditor.innerHTML = "";
+  editedPack = null;
+  void applyStyleBinding(state.styleUri);
+}
+
+async function saveStyleEdit(alsoApply: boolean): Promise<void> {
+  if (!editedPack) return;
+  const btnIds = ["#style-save", "#style-save-apply", "#style-cancel"];
+  const buttons = btnIds.map((s) => document.querySelector<HTMLButtonElement>(s)).filter(Boolean) as HTMLButtonElement[];
+  buttons.forEach((b) => { b.disabled = true; });
+  try {
+    const rec = await styleStore.save(editedPack);
+    showMessage(`saved · ${rec.slug}`, "ok");
+    if (alsoApply || state.styleUri === rec.uri) {
+      state.styleUri = rec.uri;
+      saveDraft();
+      await applyStyleBinding(rec.uri);
+      refreshStylePackPicker();
+    }
+    refreshStylesPane();
+  } catch (err) {
+    console.warn("save style pack failed", err);
+    showMessage("save failed", "warn");
+  } finally {
+    buttons.forEach((b) => { b.disabled = false; });
+  }
+}
+
+function newStylePack(): void {
+  const blank: StylePack = {
+    name: "new pack",
+    tokens: Object.fromEntries(STYLE_TOKEN_DEFS.map((t) => [t.name, t.default])),
+  };
+  openStyleEditor(null, blank);
+}
+
+async function applyPackToDiagram(uri: string): Promise<void> {
+  state.styleUri = uri;
+  saveDraft();
+  await applyStyleBinding(uri);
+  refreshStylePackPicker();
+  refreshStylesPane();
+  showMessage(`bound · ${styleNs.slugFromUri(uri)}`, "ok");
+}
+
+async function refreshStylePackPicker(): Promise<void> {
+  if (!stylePackSelect) return;
+  try {
+    const items = await styleStore.list();
+    const opts = [`<option value="">(none)</option>`];
+    const known = new Set<string>(items.map((i) => i.uri));
+    for (const { uri, slug } of items) {
+      opts.push(`<option value="${esc(uri)}">${esc(slug)}</option>`);
+    }
+    if (state.styleUri && !known.has(state.styleUri)) {
+      opts.push(`<option value="${esc(state.styleUri)}">(unknown · ${esc(styleNs.slugFromUri(state.styleUri))})</option>`);
+    }
+    stylePackSelect.innerHTML = opts.join("");
+    stylePackSelect.value = state.styleUri || "";
+  } catch (err) {
+    console.warn("refresh style pack picker failed", err);
+    stylePackSelect.innerHTML = `<option value="">(unable to load packs)</option>`;
   }
 }
 

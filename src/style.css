@@ -166,7 +166,8 @@ body { min-height: 100vh; }
 #shell[data-mode="gallery"]  .context-actions-group[data-mode="gallery"],
 #shell[data-mode="view"]     .context-actions-group[data-mode="view"],
 #shell[data-mode="draw"]     .context-actions-group[data-mode="draw"],
-#shell[data-mode="connect"]  .context-actions-group[data-mode="connect"] {
+#shell[data-mode="connect"]  .context-actions-group[data-mode="connect"],
+#shell[data-mode="styles"]   .context-actions-group[data-mode="styles"] {
   display: flex;
 }
 
@@ -230,8 +231,10 @@ body { min-height: 100vh; }
   min-height: 0;
 }
 
-#shell[data-mode="gallery"] #canvas-pane { display: none; }
+#shell[data-mode="gallery"] #canvas-pane,
+#shell[data-mode="styles"]  #canvas-pane { display: none; }
 #shell:not([data-mode="gallery"]) #gallery-pane { display: none; }
+#shell:not([data-mode="styles"])  #styles-pane  { display: none; }
 
 #canvas-pane {
   width: 100%;
@@ -369,6 +372,185 @@ body { min-height: 100vh; }
   letter-spacing: 0.5px;
   margin: 0;
   color: var(--ink);
+}
+
+/* Styles mode — mirrors gallery layout. The pane sits in mode-content; the
+   canvas is hidden in this mode (see selector above). */
+
+#styles-pane {
+  width: 100%;
+  max-width: 880px;
+  align-self: flex-start;
+}
+
+.styles-pane-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 4px 12px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 16px;
+}
+
+.styles-pane-header h2 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  margin: 0;
+  color: var(--ink);
+}
+
+.styles-pane-header .styles-count {
+  font-size: 11px;
+  color: var(--mute);
+  letter-spacing: 0.4px;
+}
+
+.styles-grid {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.style-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.style-row.is-bound {
+  border-color: var(--accent);
+}
+
+.style-row-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.style-row-name {
+  font-size: 13px;
+  color: var(--ink);
+  word-break: break-word;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.style-row-bound {
+  font-size: 9.5px;
+  color: var(--accent);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.style-row-uri {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--mute);
+  letter-spacing: 0.2px;
+  word-break: break-all;
+}
+
+.style-row-swatches {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.style-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  display: inline-block;
+}
+
+.style-row-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.styles-empty, .styles-error {
+  padding: 16px;
+  color: var(--mute);
+  font-size: 13px;
+  text-align: center;
+}
+
+.styles-error { color: var(--danger); }
+
+.style-editor {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.style-editor[hidden] { display: none; }
+
+.style-editor-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.style-editor-header .field { flex: 1 1 240px; }
+
+.style-editor-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.style-token-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.style-token-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: white;
+}
+
+.style-token-row > span {
+  flex: 1 1 auto;
+  text-transform: none;
+  font-size: 11px;
+  letter-spacing: 0;
+  color: var(--ink);
+  line-height: 1.3;
+}
+
+.style-token-row > span code {
+  font-size: 10px;
+  color: var(--mute);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .gallery-pane-header .gallery-count {
