@@ -51,9 +51,14 @@ interface DiagramState {
   centerLabel: string;
   centerSublabel: string;
   background: Background;
+  gradientFrom: string;
+  gradientTo: string;
   boxes: Box[];
   connectors: Connector[];
 }
+
+const DEFAULT_GRADIENT_FROM = "#ffffff";
+const DEFAULT_GRADIENT_TO = "#efe7d2";
 
 const CENTER_ID = "@center";
 
@@ -76,6 +81,8 @@ const state: DiagramState = {
   centerLabel: "the system",
   centerSublabel: "",
   background: "grid",
+  gradientFrom: DEFAULT_GRADIENT_FROM,
+  gradientTo: DEFAULT_GRADIENT_TO,
   boxes: [],
   connectors: [],
 };
@@ -102,6 +109,10 @@ let centerSublabelInput!: HTMLInputElement;
 let boxLabelInput!: HTMLInputElement;
 let boxSublabelInput!: HTMLInputElement;
 let bgSelect!: HTMLSelectElement;
+let gradientFromInput!: HTMLInputElement;
+let gradientToInput!: HTMLInputElement;
+let gradientFromField!: HTMLLabelElement;
+let gradientToField!: HTMLLabelElement;
 let shapeGrid!: HTMLDivElement;
 let modeSeg!: HTMLDivElement;
 let hintSpan!: HTMLSpanElement;
@@ -202,6 +213,18 @@ function normalizeState(): void {
   const legacy = (state as unknown as { theme?: string }).theme;
   if (typeof legacy === "string" && !state.scene) state.scene = legacy;
   delete (state as unknown as { theme?: string }).theme;
+  if (!isHexColor(state.gradientFrom)) state.gradientFrom = DEFAULT_GRADIENT_FROM;
+  if (!isHexColor(state.gradientTo)) state.gradientTo = DEFAULT_GRADIENT_TO;
+}
+
+function isHexColor(v: unknown): v is string {
+  return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);
+}
+
+function syncGradientControls(): void {
+  const show = state.background === "gradient";
+  gradientFromField.hidden = !show;
+  gradientToField.hidden = !show;
 }
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -261,6 +284,14 @@ function bootDiagrammer(): void {
                 <option value="diagonals">diagonals</option>
                 <option value="gradient">gradient</option>
               </select>
+            </label>
+            <label class="field field-color" id="gradient-from-field" hidden>
+              <span>from</span>
+              <input id="gradient-from-input" type="color" />
+            </label>
+            <label class="field field-color" id="gradient-to-field" hidden>
+              <span>to</span>
+              <input id="gradient-to-input" type="color" />
             </label>
           </div>
           <div class="context-actions-group" data-mode="connect">
@@ -335,6 +366,10 @@ function bootDiagrammer(): void {
   boxLabelInput = document.querySelector<HTMLInputElement>("#box-label-input")!;
   boxSublabelInput = document.querySelector<HTMLInputElement>("#box-sublabel-input")!;
   bgSelect = document.querySelector<HTMLSelectElement>("#bg-select")!;
+  gradientFromInput = document.querySelector<HTMLInputElement>("#gradient-from-input")!;
+  gradientToInput = document.querySelector<HTMLInputElement>("#gradient-to-input")!;
+  gradientFromField = document.querySelector<HTMLLabelElement>("#gradient-from-field")!;
+  gradientToField = document.querySelector<HTMLLabelElement>("#gradient-to-field")!;
   shapeGrid = document.querySelector<HTMLDivElement>("#shape-grid")!;
   modeSeg = document.querySelector<HTMLDivElement>("#mode-seg")!;
   hintSpan = document.querySelector<HTMLSpanElement>("#hint")!;
@@ -353,6 +388,9 @@ function bootDiagrammer(): void {
   centerLabelInput.value = state.centerLabel;
   centerSublabelInput.value = state.centerSublabel;
   bgSelect.value = state.background;
+  gradientFromInput.value = state.gradientFrom;
+  gradientToInput.value = state.gradientTo;
+  syncGradientControls();
 
   // Mode precedence: URL hash > derived default (view if non-empty, draw if empty).
   currentMode = decodeModeFromHash()
@@ -488,7 +526,19 @@ function wireEvents(): void {
   sceneInput.addEventListener("input", () => { state.scene = sceneInput.value; render(); });
   centerLabelInput.addEventListener("input", () => { state.centerLabel = centerLabelInput.value; render(); });
   centerSublabelInput.addEventListener("input", () => { state.centerSublabel = centerSublabelInput.value; render(); });
-  bgSelect.addEventListener("change", () => { state.background = bgSelect.value as Background; render(); });
+  bgSelect.addEventListener("change", () => {
+    state.background = bgSelect.value as Background;
+    syncGradientControls();
+    render();
+  });
+  gradientFromInput.addEventListener("input", () => {
+    state.gradientFrom = gradientFromInput.value;
+    render();
+  });
+  gradientToInput.addEventListener("input", () => {
+    state.gradientTo = gradientToInput.value;
+    render();
+  });
 
   shapeGrid.addEventListener("click", (e) => {
     const btn = (e.target as Element).closest("button[data-shape]") as HTMLButtonElement | null;
@@ -633,6 +683,9 @@ function loadDiagramState(newState: Partial<DiagramState>): void {
   centerLabelInput.value = state.centerLabel;
   centerSublabelInput.value = state.centerSublabel;
   bgSelect.value = state.background;
+  gradientFromInput.value = state.gradientFrom;
+  gradientToInput.value = state.gradientTo;
+  syncGradientControls();
   selectedId = null;
   selectedConnectorId = null;
   connectFrom = null;
@@ -924,8 +977,8 @@ function renderBackground(): string {
       return `
         <defs>
           <radialGradient id="bg-grad" cx="50%" cy="50%" r="65%">
-            <stop offset="0%" stop-color="#ffffff"/>
-            <stop offset="100%" stop-color="#efe7d2"/>
+            <stop offset="0%" stop-color="${esc(state.gradientFrom)}"/>
+            <stop offset="100%" stop-color="${esc(state.gradientTo)}"/>
           </radialGradient>
         </defs>
         <rect width="100%" height="100%" fill="url(#bg-grad)"/>`;
