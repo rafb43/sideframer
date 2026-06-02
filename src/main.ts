@@ -57,6 +57,8 @@ interface DiagramState {
   gradientTo: string;
   boxes: Box[];
   connectors: Connector[];
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 const DEFAULT_GRADIENT_FROM = "#ffffff";
@@ -574,6 +576,9 @@ function wireEvents(): void {
       btn.disabled = true;
       btn.textContent = "saving…";
       try {
+        const now = Date.now();
+        if (typeof state.createdAt !== "number") state.createdAt = now;
+        state.updatedAt = now;
         const rec = await diagramStore.save(state);
         btn.textContent = `saved · ${rec.slug.slice(0, 24)}${rec.slug.length > 24 ? "…" : ""}`;
         if (currentMode === "gallery") refreshGallery();
@@ -725,11 +730,24 @@ async function refreshGallery(): Promise<void> {
   try {
     const items = await diagramStore.list();
     if (token !== galleryToken) return;
+    // Load every record up front so we can sort by createdAt before rendering.
+    // Records without a createdAt (saved before this field existed) sort last.
+    const loaded = await Promise.all(items.map(async ({ uri, slug }) => {
+      try {
+        const rec = await diagramStore.load(uri);
+        const diagram = rec?.diagram as Partial<DiagramState> | undefined;
+        const createdAt = typeof diagram?.createdAt === "number" ? diagram.createdAt : 0;
+        return { uri, slug, diagram, createdAt };
+      } catch {
+        return { uri, slug, diagram: undefined, createdAt: 0 };
+      }
+    }));
+    if (token !== galleryToken) return;
+    loaded.sort((a, b) => (b.createdAt - a.createdAt) || a.slug.localeCompare(b.slug));
     galleryList.innerHTML = "";
-    galleryEmpty.hidden = items.length > 0;
-    galleryCount.textContent = items.length > 0 ? `${items.length} saved` : "";
-    const rows: { li: HTMLLIElement; uri: string }[] = [];
-    for (const { uri, slug } of items) {
+    galleryEmpty.hidden = loaded.length > 0;
+    galleryCount.textContent = loaded.length > 0 ? `${loaded.length} saved` : "";
+    for (const { uri, slug, diagram } of loaded) {
       const li = document.createElement("li");
       li.className = "gallery-tile";
       li.dataset.uri = uri;
@@ -739,11 +757,11 @@ async function refreshGallery(): Promise<void> {
           <span class="g-slug">${esc(slug)}</span>
           <span class="g-uri">${esc(uri)}</span>
         </div>
-        <div class="g-preview is-empty" data-preview>…</div>`;
+        <div class="g-preview${diagram ? "" : " is-empty"}" data-preview>${
+          diagram ? buildPreviewSVG(diagram) : "no preview"
+        }</div>`;
       galleryList.appendChild(li);
-      rows.push({ li, uri });
     }
-    await Promise.all(rows.map(({ li, uri }) => populatePreview(li, uri, token)));
   } catch (e) {
     if (token !== galleryToken) return;
     galleryError.hidden = false;
@@ -753,25 +771,6 @@ async function refreshGallery(): Promise<void> {
     galleryEmpty.hidden = true;
     galleryCount.textContent = "";
     console.warn("gallery refresh failed", e);
-  }
-}
-
-async function populatePreview(li: HTMLLIElement, uri: string, token: number): Promise<void> {
-  const slot = li.querySelector<HTMLDivElement>("[data-preview]");
-  if (!slot) return;
-  try {
-    const rec = await diagramStore.load(uri);
-    if (token !== galleryToken) return;
-    const diagram = rec?.diagram as Partial<DiagramState> | undefined;
-    if (!diagram) {
-      slot.textContent = "no preview";
-      return;
-    }
-    slot.classList.remove("is-empty");
-    slot.innerHTML = buildPreviewSVG(diagram);
-  } catch {
-    if (token !== galleryToken) return;
-    slot.textContent = "preview failed";
   }
 }
 
