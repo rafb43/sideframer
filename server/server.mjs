@@ -37,6 +37,30 @@ const ROOT = process.env.SIDEFRAMER_DATA || join(homedir(), ".sideframer");
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
+// Recursively enumerate files under `rootDir`, returning paths relative
+// to it (POSIX separators). Used by the `ls` branch so a namespace can
+// hold nested URIs (e.g., `mutable://styles/<pack>/<token>`) and the
+// listing still finds every leaf.
+async function walkFiles(rootDir) {
+  const out = [];
+  async function recurse(currentDir, prefix) {
+    let entries;
+    try {
+      entries = await readdir(currentDir, { withFileTypes: true });
+    } catch (e) {
+      if (e?.code === "ENOENT") return;
+      throw e;
+    }
+    for (const ent of entries) {
+      const rel = prefix ? `${prefix}/${ent.name}` : ent.name;
+      if (ent.isDirectory()) await recurse(join(currentDir, ent.name), rel);
+      else if (ent.isFile()) out.push(rel);
+    }
+  }
+  await recurse(rootDir, "");
+  return out;
+}
+
 // One mounted b3nd app: a namespace + filesystem directory.
 function mountFs(ns, dir) {
   const filePath = (uri) => join(dir, ns.uriToFilename(uri));
@@ -67,19 +91,28 @@ function mountFs(ns, dir) {
       for (const rawUrl of urls) {
         const { uri, fn, format } = parseLocator(rawUrl);
         if (fn === "ls") {
-          let entries = [];
+          // ls can target the namespace root (`mutable://x/`) or a
+          // sub-path (`mutable://x/some/sub/`). The latter walks just
+          // that subtree so callers can scope a listing to a single
+          // record without filtering client-side.
+          const nsPrefix = `${ns.base}/`;
+          let scopeRel = "";
+          if (uri.startsWith(nsPrefix) && uri.length > nsPrefix.length) {
+            scopeRel = uri.slice(nsPrefix.length).replace(/\/+$/, "");
+          }
+          const scopeDir = scopeRel ? join(dir, scopeRel) : dir;
+          let relFiles = [];
           try {
-            const dirents = await readdir(dir, { withFileTypes: true });
-            entries = dirents
-              .filter((e) => e.isFile())
-              .map((e) => ns.filenameToUri(e.name))
-              .filter((u) => u !== null);
+            relFiles = await walkFiles(scopeDir);
           } catch (e) {
             if (e?.code !== "ENOENT") throw e;
           }
+          const uris = relFiles
+            .map((rel) => ns.filenameToUri(scopeRel ? `${scopeRel}/${rel}` : rel))
+            .filter((u) => u !== null);
           if (format === "full") {
             const full = [];
-            for (const u of entries) {
+            for (const u of uris) {
               try {
                 const json = await readFile(filePath(u), "utf8");
                 full.push([u, JSON.parse(json)]);
@@ -87,7 +120,7 @@ function mountFs(ns, dir) {
             }
             out.push([rawUrl, full]);
           } else {
-            out.push([rawUrl, entries]);
+            out.push([rawUrl, uris]);
           }
         } else {
           try {

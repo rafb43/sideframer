@@ -2,22 +2,26 @@ import { connection, Rig } from "@bandeira-tech/b3nd-core/rig";
 import { HttpClient } from "@bandeira-tech/b3nd-move/http/client";
 import { type Namespace, sluggify } from "./sluggify.ts";
 
-// A style pack is a small JSON payload that overrides the default visual
-// tokens of the diagram shell. Diagrams reference one by URI (`styleUri`);
-// the binding is live — updating the pack updates every diagram that points
-// at it. Snapshots happen only on PNG export.
+// A style pack used to be saved as a single JSON blob at
+// `mutable://styles/<slug>`. We now lean into the URI hierarchy:
+// every field of the pack lives at its own URI, e.g.
+//
+//   mutable://styles/dark-canvas/kind   -> "canvas"
+//   mutable://styles/dark-canvas/name   -> "dark-canvas"
+//   mutable://styles/dark-canvas/bg     -> "#0f172a"
+//   mutable://styles/dark-canvas/bgMode -> "grid"
+//   ...
+//
+// Saves write N tuples in one `rig.receive` call; loads issue a single
+// scoped `ls&format=full` read which returns every component for that
+// base URI in one round-trip. Diagram state references the base URI
+// (`mutable://styles/dark-canvas`) — never the per-component leaves —
+// so consumers don't have to know which fields exist for which kind.
 
 export type StyleKind = "canvas" | "object";
 
 export interface StylePack {
   name: string;
-  /**
-   * What the pack reskins. `canvas` packs control diagram-wide tokens
-   * (background, typography, axis labels); `object` packs control box /
-   * line / center tokens and can also be applied per-box as overrides.
-   * Packs without a kind (older saves) are treated as `object` —
-   * recreate them through the editor to claim a different role.
-   */
   kind: StyleKind;
   tokens: Record<string, string>;
   createdAt?: number;
@@ -25,14 +29,13 @@ export interface StylePack {
 }
 
 export interface StylePackRecord {
-  uri: string;
+  uri: string;       // base URI, e.g. mutable://styles/dark-canvas
   slug: string;
   name: string;
   pack: StylePack;
 }
 
 const enc = new TextEncoder();
-const dec = new TextDecoder();
 
 export function createStyleRig(serverUrl: string, ns: Namespace): Rig {
   const client = new HttpClient({ url: serverUrl });
@@ -48,28 +51,8 @@ function toBytes(value: unknown): Uint8Array {
   return enc.encode(JSON.stringify(value));
 }
 
-async function bytesToJson(payload: unknown): Promise<unknown> {
-  if (payload == null) return undefined;
-  if (payload instanceof Uint8Array) return JSON.parse(dec.decode(payload));
-  if (payload instanceof ReadableStream) {
-    const chunks: Uint8Array[] = [];
-    const reader = payload.getReader();
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value) chunks.push(value);
-    }
-    const total = chunks.reduce((n, c) => n + c.byteLength, 0);
-    const out = new Uint8Array(total);
-    let off = 0;
-    for (const c of chunks) {
-      out.set(c, off);
-      off += c.byteLength;
-    }
-    return JSON.parse(dec.decode(out));
-  }
-  if (typeof payload === "string") return JSON.parse(payload);
-  return payload;
+function componentUri(baseUri: string, key: string): string {
+  return `${baseUri}/${key}`;
 }
 
 export class StyleStore {
@@ -83,34 +66,93 @@ export class StyleStore {
   async save(pack: StylePack): Promise<StylePackRecord> {
     const name = pack.name || "untitled";
     const slug = sluggify(name);
-    const uri = this.ns.uriFor(slug);
-    const bytes = toBytes({ ...pack, name });
-    // `rig.receive` returns on pipeline-ack — the HTTP POST fires in the
-    // background. Await `settled` so subsequent reads see the new state.
-    const op = this.rig.receive([[uri, bytes]]);
+    const base = this.ns.uriFor(slug);
+    const tuples: [string, Uint8Array][] = [];
+    tuples.push([componentUri(base, "kind"), toBytes(pack.kind)]);
+    tuples.push([componentUri(base, "name"), toBytes(name)]);
+    for (const [tokenName, value] of Object.entries(pack.tokens || {})) {
+      tuples.push([componentUri(base, tokenName), toBytes(value)]);
+    }
+    const op = this.rig.receive(tuples);
     const results = await op;
     await op.settled;
-    const result = results[0];
-    if (!result || (typeof result === "object" && "accepted" in result && !result.accepted)) {
-      throw new Error(`save rejected: ${JSON.stringify(result)}`);
+    for (const r of results) {
+      if (r && typeof r === "object" && "accepted" in r && !r.accepted) {
+        throw new Error(`save rejected: ${JSON.stringify(r)}`);
+      }
     }
-    return { uri, slug, name, pack: { ...pack, name } };
+    return { uri: base, slug, name, pack: { ...pack, name } };
   }
 
-  async load(uri: string): Promise<StylePackRecord | null> {
-    const [out] = await this.rig.read([uri]);
-    if (!out || out[1] == null) return null;
-    const pack = (await bytesToJson(out[1])) as StylePack;
-    const slug = this.ns.slugFromUri(uri);
-    return { uri, slug, name: pack?.name || slug, pack };
+  // Load a single pack by issuing a scoped `ls&format=full` against its
+  // base URI. The server returns every component in one trip.
+  async load(baseUri: string): Promise<StylePackRecord | null> {
+    const locator = `${baseUri}/?fn=ls&format=full`;
+    const [out] = await this.rig.read([locator]);
+    if (!out || !Array.isArray(out[1])) return null;
+    const components = out[1] as [string, unknown][];
+    if (components.length === 0) return null;
+    return assemblePackRecord(this.ns, baseUri, components);
   }
 
-  async list(): Promise<{ uri: string; slug: string }[]> {
-    const [out] = await this.rig.read([this.ns.listLocator]);
+  // List every pack the store knows about, in a single round-trip.
+  // The ns-wide `ls&format=full` returns every component URI + value;
+  // we group by base URI (everything before the last path segment) and
+  // assemble one record per pack.
+  async list(): Promise<StylePackRecord[]> {
+    const locator = `${this.ns.base}/?fn=ls&format=full`;
+    const [out] = await this.rig.read([locator]);
     if (!out || !Array.isArray(out[1])) return [];
-    return (out[1] as string[]).map((uri) => ({
-      uri,
-      slug: this.ns.slugFromUri(uri),
-    }));
+    const components = out[1] as [string, unknown][];
+    const byBase = new Map<string, [string, unknown][]>();
+    const nsPrefix = `${this.ns.base}/`;
+    for (const entry of components) {
+      const [uri] = entry;
+      if (!uri.startsWith(nsPrefix)) continue;
+      const rel = uri.slice(nsPrefix.length);
+      const firstSlash = rel.indexOf("/");
+      if (firstSlash <= 0) continue;
+      const slug = rel.slice(0, firstSlash);
+      const base = `${this.ns.base}/${slug}`;
+      let bucket = byBase.get(base);
+      if (!bucket) { bucket = []; byBase.set(base, bucket); }
+      bucket.push(entry);
+    }
+    const records: StylePackRecord[] = [];
+    for (const [base, bucket] of byBase) {
+      const rec = assemblePackRecord(this.ns, base, bucket);
+      if (rec) records.push(rec);
+    }
+    return records;
   }
+}
+
+function assemblePackRecord(
+  ns: Namespace,
+  baseUri: string,
+  components: [string, unknown][],
+): StylePackRecord | null {
+  let kind: StyleKind = "object";
+  let name = "";
+  const tokens: Record<string, string> = {};
+  const prefix = `${baseUri}/`;
+  let sawAny = false;
+  for (const [uri, value] of components) {
+    if (!uri.startsWith(prefix)) continue;
+    sawAny = true;
+    const key = uri.slice(prefix.length);
+    const strVal = typeof value === "string" ? value : String(value ?? "");
+    if (key === "kind") kind = strVal === "canvas" ? "canvas" : "object";
+    else if (key === "name") name = strVal;
+    else tokens[key] = strVal;
+  }
+  if (!sawAny) return null;
+  const slug = ns.slugFromUri(baseUri);
+  const finalName = name || slug;
+  return {
+    uri: baseUri,
+    slug,
+    name: finalName,
+    pack: { name: finalName, kind, tokens },
+  };
 }

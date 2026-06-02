@@ -1094,17 +1094,11 @@ async function refreshStylesPane(): Promise<void> {
   stylesError.hidden = true;
   const token = ++stylesToken;
   try {
-    const items = await styleStore.list();
+    const records = await styleStore.list();
     if (token !== stylesToken) return;
     stylesList.innerHTML = "";
-    stylesEmpty.hidden = items.length > 0;
-    stylesCount.textContent = items.length > 0 ? `${items.length} pack${items.length === 1 ? "" : "s"}` : "";
-    const records = await Promise.all(
-      items.map(({ uri }) =>
-        styleStore.load(uri).catch(() => null as null)
-      ),
-    );
-    if (token !== stylesToken) return;
+    stylesEmpty.hidden = records.length > 0;
+    stylesCount.textContent = records.length > 0 ? `${records.length} pack${records.length === 1 ? "" : "s"}` : "";
     cachedPackList = [];
     // A not-yet-saved new pack appears at the top with the editor already
     // open. Its URI is empty until the first save.
@@ -1500,11 +1494,8 @@ async function refreshDiagramPackPickers(): Promise<void> {
   let packs = cachedPackList;
   if (packs.length === 0) {
     try {
-      const items = await styleStore.list();
-      const records = await Promise.all(items.map(({ uri }) =>
-        styleStore.load(uri).catch(() => null as null)
-      ));
-      packs = records.filter((r): r is NonNullable<typeof r> => r != null).map((r) => ({
+      const records = await styleStore.list();
+      packs = records.map((r) => ({
         uri: r.uri, slug: r.slug, name: r.name,
         kind: (r.pack.kind === "canvas" ? "canvas" : "object") as StyleKind,
       }));
