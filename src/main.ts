@@ -1,6 +1,7 @@
 import "./style.css";
 import { createClientRig, DiagramStore } from "./lib/diagram-store.ts";
-import { renderDesignSystem } from "./lib/design-system.ts";
+// design-system and help pages are dynamic-imported on demand (see setPage)
+// to keep the diagrammer bundle light.
 
 const STORAGE_SERVER = (import.meta as { env?: { VITE_SIDEFRAMER_SERVER?: string } }).env
   ?.VITE_SIDEFRAMER_SERVER || "http://localhost:5174";
@@ -35,6 +36,9 @@ type Background = "clean" | "grid" | "sections" | "diagonals" | "gradient";
 
 type Mode = "gallery" | "view" | "draw" | "connect";
 const MODES: Mode[] = ["gallery", "view", "draw", "connect"];
+
+type Page = "design-system" | "help";
+const PAGES: Page[] = ["design-system", "help"];
 
 interface Connector {
   id: string;
@@ -82,6 +86,11 @@ let dragState: { id: string; offsetX: number; offsetY: number; moved: boolean } 
 let currentMode: Mode = "draw";
 let connectFrom: string | null = null;
 let galleryToken = 0;
+let currentPage: Page | null = null;
+let pageToken = 0;
+let pageOverlay!: HTMLDivElement;
+let pageBody!: HTMLDivElement;
+let pageTitle!: HTMLElement;
 
 // DOM refs — assigned by bootDiagrammer()
 let shellEl!: HTMLElement;
@@ -163,8 +172,20 @@ function decodeModeFromHash(): Mode | null {
   return MODES.includes(mode) ? mode : null;
 }
 
+function decodePageFromHash(): Page | null {
+  const hash = window.location.hash;
+  if (!hash) return null;
+  const m = hash.match(/[#&]p=([^&]+)/);
+  if (!m) return null;
+  const page = m[1] as Page;
+  return PAGES.includes(page) ? page : null;
+}
+
 function currentHashUrl(): string {
-  return `#m=${currentMode}&d=${b64urlEncode(JSON.stringify(state))}`;
+  const parts = [`m=${currentMode}`];
+  if (currentPage) parts.push(`p=${currentPage}`);
+  parts.push(`d=${b64urlEncode(JSON.stringify(state))}`);
+  return `#${parts.join("&")}`;
 }
 
 function writeStateToHash(): void {
@@ -271,8 +292,17 @@ function bootDiagrammer(): void {
       </footer>
 
       <div class="brand-footer">
-        sideframer · DFT diagrams · <a href="#design-system">components</a>
+        sideframer · DFT diagrams · <a href="#" data-page="design-system">components</a> · <a href="#" data-page="help">help</a>
       </div>
+    </div>
+
+    <div class="page-overlay" id="page-overlay" hidden role="dialog" aria-modal="true">
+      <header class="page-overlay-bar">
+        <h1 class="page-overlay-title" id="page-overlay-title"></h1>
+        <span class="page-overlay-hint">press <kbd>esc</kbd> to close</span>
+        <button type="button" class="page-overlay-close" id="page-overlay-close" title="close (esc)">×</button>
+      </header>
+      <div class="page-overlay-body" id="page-overlay-body"></div>
     </div>
 
     <aside class="inspector" id="inspector" hidden>
@@ -312,6 +342,9 @@ function bootDiagrammer(): void {
   galleryEmpty = document.querySelector<HTMLDivElement>("#gallery-empty")!;
   galleryError = document.querySelector<HTMLDivElement>("#gallery-error")!;
   galleryCount = document.querySelector<HTMLSpanElement>("#gallery-count")!;
+  pageOverlay = document.querySelector<HTMLDivElement>("#page-overlay")!;
+  pageBody = document.querySelector<HTMLDivElement>("#page-overlay-body")!;
+  pageTitle = document.querySelector<HTMLElement>("#page-overlay-title")!;
 
   Object.assign(state, decodeStateFromHash() ?? loadDraft() ?? {});
   normalizeState();
@@ -328,6 +361,10 @@ function bootDiagrammer(): void {
   wireEvents();
   setMode(currentMode);
   render();
+
+  // Restore overlay page from URL (e.g. landing on #p=design-system).
+  const initialPage = decodePageFromHash();
+  if (initialPage) setPage(initialPage);
 
   // Load-from-query on boot — agent-generated URLs use ?load=mutable://diagrams/...
   (async () => {
@@ -375,6 +412,68 @@ function setMode(m: Mode): void {
   }
   if (m === "gallery") refreshGallery();
   render();
+}
+
+const PAGE_TITLES: Record<Page, string> = {
+  "design-system": "components",
+  "help": "keyboard shortcuts",
+};
+
+// Lazy-loaded full-page overlays (design system, help). Modules are
+// dynamic-imported on first open so they don't bloat the main bundle.
+function setPage(p: Page | null): void {
+  if (p === currentPage) return;
+  const pageChanged = true;
+  const prev = currentPage;
+  currentPage = p;
+  const token = ++pageToken;
+
+  if (p === null) {
+    pageOverlay.hidden = true;
+    pageBody.innerHTML = "";
+    pageTitle.textContent = "";
+  } else {
+    pageOverlay.hidden = false;
+    pageTitle.textContent = PAGE_TITLES[p];
+    pageBody.innerHTML = `<div class="page-overlay-loading">loading…</div>`;
+    loadPageModule(p).then((render) => {
+      if (token !== pageToken) return;
+      render(pageBody);
+    }).catch((err) => {
+      if (token !== pageToken) return;
+      pageBody.innerHTML = `<div class="page-overlay-error">failed to load page</div>`;
+      console.warn(`load page ${p} failed`, err);
+    });
+    // Reset scroll so a long page doesn't open mid-way through.
+    pageOverlay.scrollTop = 0;
+  }
+
+  if (pageChanged && decodePageFromHash() !== p) {
+    try {
+      // Opening a page pushes a new entry; closing it (p === null) replaces,
+      // because closing is logically a return, not a forward navigation.
+      if (p === null && prev) {
+        history.replaceState(null, "", currentHashUrl());
+      } else {
+        history.pushState(null, "", currentHashUrl());
+      }
+    } catch {
+      // ignore security/quota errors
+    }
+  }
+}
+
+function loadPageModule(p: Page): Promise<(root: HTMLElement) => void> {
+  if (p === "design-system") {
+    return import("./lib/design-system.ts").then(({ renderDesignSystem }) =>
+      (root: HTMLElement) => renderDesignSystem(root, {
+        renderShape, shapeIconSvg, buildPreviewSVG, SHAPES,
+      })
+    );
+  }
+  return import("./lib/help-page.ts").then(({ renderHelpPage }) =>
+    (root: HTMLElement) => renderHelpPage(root)
+  );
 }
 
 function updateModeUI(): void {
@@ -456,6 +555,21 @@ function wireEvents(): void {
   document.addEventListener("keydown", (e) => {
     const active = document.activeElement;
     const typing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+    // Esc: close overlay page first, otherwise fall back to mode reset.
+    if (e.key === "Escape") {
+      if (active instanceof HTMLElement) active.blur();
+      if (currentPage) { setPage(null); return; }
+      setMode("view");
+      return;
+    }
+    // Page shortcuts (?, >) — work from anywhere except text inputs.
+    if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (e.key === "?") { setPage("help"); return; }
+      if (e.key === ">") { setPage("design-system"); return; }
+    }
+    // Below: anything that depends on the underlying diagrammer should not
+    // fire while an overlay page is showing.
+    if (currentPage) return;
     if (!typing && (e.key === "Backspace" || e.key === "Delete")) {
       if (selectedId) {
         e.preventDefault();
@@ -465,11 +579,6 @@ function wireEvents(): void {
         deleteSelectedConnector();
       }
     }
-    if (e.key === "Escape") {
-      if (active instanceof HTMLElement) active.blur();
-      setMode("view");
-      return;
-    }
     if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
       if (e.key === "g" || e.key === "G") { setMode("gallery"); return; }
       if (e.key === "v" || e.key === "V") { setMode("view"); return; }
@@ -478,15 +587,39 @@ function wireEvents(): void {
     }
   });
 
+  document.querySelector<HTMLButtonElement>("#page-overlay-close")
+    ?.addEventListener("click", () => setPage(null));
+
+  document.querySelectorAll<HTMLAnchorElement>("a[data-page]").forEach((a) => {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      const p = a.dataset.page as Page;
+      if (PAGES.includes(p)) setPage(p);
+    });
+  });
+
   window.addEventListener("hashchange", () => {
+    // Legacy redirect: old standalone routes used "#design-system" / "#help".
     if (location.hash === "#design-system") {
-      location.reload();
+      history.replaceState(null, "", "#p=design-system");
+      setPage("design-system");
       return;
     }
-    const fromHash = decodeStateFromHash();
-    if (fromHash) loadDiagramState(fromHash);
+    if (location.hash === "#help") {
+      history.replaceState(null, "", "#p=help");
+      setPage("help");
+      return;
+    }
+    // Sync page and mode FIRST so that any rendering triggered by
+    // loadDiagramState reflects the new currentPage / currentMode when it
+    // calls writeStateToHash — otherwise it'd re-encode stale state into
+    // the URL and undo a back/forward navigation.
+    const pageFromHash = decodePageFromHash();
+    if (pageFromHash !== currentPage) setPage(pageFromHash);
     const modeFromHash = decodeModeFromHash();
     if (modeFromHash && modeFromHash !== currentMode) setMode(modeFromHash);
+    const fromHash = decodeStateFromHash();
+    if (fromHash) loadDiagramState(fromHash);
   });
 
   window.addEventListener("scroll", positionInspector, true);
@@ -1218,11 +1351,11 @@ function flash(msg: string, isError = false): void {
 
 // ---------------- App-level routing ----------------
 
+// Legacy URL redirect: old standalone routes used "#design-system" / "#help".
 if (location.hash === "#design-system") {
-  renderDesignSystem(app, { renderShape, shapeIconSvg, buildPreviewSVG, SHAPES });
-  window.addEventListener("hashchange", () => {
-    if (location.hash !== "#design-system") location.reload();
-  });
-} else {
-  bootDiagrammer();
+  history.replaceState(null, "", "#p=design-system");
+} else if (location.hash === "#help") {
+  history.replaceState(null, "", "#p=help");
 }
+
+bootDiagrammer();

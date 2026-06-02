@@ -31,7 +31,6 @@ function page(deps: DSDeps): string {
     <div class="ds-page">
       <header class="ds-header">
         <h1>sideframer · components</h1>
-        <a class="ds-back" href="#">← back to app</a>
       </header>
 
       ${sectionColors()}
