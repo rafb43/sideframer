@@ -1080,6 +1080,15 @@ let editingNewKind: StyleKind | null = null;
 // without re-fetching on each refresh. Filled by `refreshStylesPane`.
 let cachedPackList: { uri: string; slug: string; name: string; kind: StyleKind }[] = [];
 
+// Auto-save: every edit lands on disk after a short debounce so the editor
+// doesn't carry an "unsaved" concept. Token changes feel snappy at ~250ms;
+// the name field uses a longer window because each pause-typed character
+// produces a different slug → renaming briefly creates orphan packs at
+// intermediate slugs. The longer name debounce keeps that to one.
+const AUTOSAVE_TOKEN_MS = 250;
+const AUTOSAVE_NAME_MS = 1000;
+let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
 async function refreshStylesPane(): Promise<void> {
   if (!stylesError) return;
   stylesError.hidden = true;
@@ -1210,10 +1219,10 @@ function renderEditorBody(pack: StylePack, canApply: boolean): string {
         <input data-editor-name type="text" value="${esc(pack.name)}"/>
       </label>
       <span class="style-editor-kind kind-${kind}">${kind} pack</span>
+      <span class="style-editor-autosave" data-editor-autosave>changes save automatically</span>
       <div class="style-editor-actions">
         ${applyBtn}
-        <button class="btn" type="button" data-editor-action="save">save</button>
-        <button class="btn-mini" type="button" data-editor-action="cancel">cancel</button>
+        <button class="btn-mini" type="button" data-editor-action="close">close</button>
       </div>
     </header>
     <div class="${gridClass}">
@@ -1280,19 +1289,20 @@ function wireOpenRowEditor(): void {
         if (partner) partner.value = value;
       }
       writeEditedToken(name, value);
+      scheduleAutoSave(AUTOSAVE_TOKEN_MS);
     });
   });
   const nameInput = editor.querySelector<HTMLInputElement>("[data-editor-name]");
   if (nameInput) {
     nameInput.addEventListener("input", () => {
       if (editedPack) editedPack.name = nameInput.value;
+      scheduleAutoSave(AUTOSAVE_NAME_MS);
     });
   }
   editor.querySelectorAll<HTMLButtonElement>("[data-editor-action]").forEach((btn) => {
     const action = btn.dataset.editorAction;
     btn.addEventListener("click", () => {
-      if (action === "cancel") { closeStyleEditor(); refreshStylesPane(); }
-      else if (action === "save") void saveEditedPack();
+      if (action === "close") { closeStyleEditor(); refreshStylesPane(); }
       else if (action === "apply") void applyEditedPack();
     });
   });
@@ -1356,6 +1366,7 @@ function primeActiveTokensFor(pack: StylePack): void {
 }
 
 function closeStyleEditor(): void {
+  if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
   editedPack = null;
   activePackUri = null;
   editingNewKind = null;
@@ -1363,57 +1374,109 @@ function closeStyleEditor(): void {
   void applyBindings();
 }
 
-// Save the current edits. If the pack matches whatever slot is currently
-// bound (canvas or object default), re-apply so the rest of the cache
-// picks up the new tokens too.
-async function saveEditedPack(): Promise<void> {
+function scheduleAutoSave(delay: number): void {
   if (!editedPack) return;
-  const buttons = stylesList.querySelectorAll<HTMLButtonElement>(".style-row.is-open [data-editor-action]");
-  buttons.forEach((b) => { b.disabled = true; });
+  if (autoSaveTimer) clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => { void runAutoSave(); }, delay);
+}
+
+// Persist the in-memory edits to b3nd, then patch the open row's summary
+// in place (swatches, name, uri) so the user can keep typing. The editor
+// HTML is deliberately not re-rendered — that would steal focus.
+async function runAutoSave(): Promise<void> {
+  autoSaveTimer = null;
+  if (!editedPack) return;
+  const indicator = stylesList.querySelector<HTMLElement>(".style-row.is-open [data-editor-autosave]");
+  if (indicator) indicator.textContent = "saving…";
   try {
     const rec = await styleStore.save(editedPack);
-    showMessage(`saved · ${rec.slug}`, "ok");
+    const isNew = editingNewKind != null;
     editingNewKind = null;
     activePackUri = rec.uri;
-    const slot = rec.pack.kind === "canvas" ? state.canvasStyleUri : state.objectStyleUri;
-    if (slot === rec.uri || state.boxes.some((b) => b.styleUri === rec.uri)) {
+    upsertCachedPack(rec.uri, rec.slug, rec.name, rec.pack.kind === "canvas" ? "canvas" : "object");
+    patchOpenRowSummary(rec.uri, rec.slug, rec.name, rec.pack);
+    refreshDiagramPackPickers();
+    refreshBoxStylePicker();
+    if (
+      state.canvasStyleUri === rec.uri ||
+      state.objectStyleUri === rec.uri ||
+      state.boxes.some((b) => b.styleUri === rec.uri)
+    ) {
       await applyBindings();
     }
-    refreshStylesPane();
+    if (indicator) {
+      indicator.textContent = isNew ? "saved · new pack" : "saved";
+      setTimeout(() => {
+        if (indicator.isConnected) indicator.textContent = "changes save automatically";
+      }, 1200);
+    }
   } catch (err) {
-    console.warn("save style pack failed", err);
-    showMessage("save failed", "warn");
-  } finally {
-    buttons.forEach((b) => { b.disabled = false; });
+    console.warn("auto-save failed", err);
+    if (indicator) indicator.textContent = "save failed — retrying…";
+    // Retry once on a slight delay; if it keeps failing leave the error message.
+    setTimeout(() => scheduleAutoSave(AUTOSAVE_TOKEN_MS), 1500);
   }
 }
 
-// Save and bind in one click — the user-visible "apply" button. For a
-// new pack this assigns it a URI then binds; for an existing pack it
-// persists the edits and binds to the matching slot.
+function upsertCachedPack(uri: string, slug: string, name: string, kind: StyleKind): void {
+  const idx = cachedPackList.findIndex((p) => p.uri === uri);
+  const entry = { uri, slug, name, kind };
+  if (idx >= 0) cachedPackList[idx] = entry;
+  else cachedPackList.push(entry);
+}
+
+// Update the open row's summary block to reflect a freshly-saved pack.
+// Done by direct DOM mutation so the editor inputs keep focus.
+function patchOpenRowSummary(uri: string, _slug: string, name: string, pack: StylePack): void {
+  const row = stylesList.querySelector<HTMLLIElement>("li.style-row.is-open");
+  if (!row) return;
+  row.dataset.uri = uri;
+  row.classList.remove("is-new");
+  const kind: StyleKind = pack.kind === "canvas" ? "canvas" : "object";
+  const tokens = pack.tokens || {};
+  const colorEntries = Object.entries(tokens).filter(([, v]) => /^#[0-9a-fA-F]{6}$/.test(v));
+  const swatchesHtml = colorEntries.slice(0, 8).map(([n, v]) =>
+    `<span class="style-swatch" style="background:${esc(v)}" title="${esc(n)}: ${esc(v)}"></span>`
+  ).join("");
+  const swatchesEl = row.querySelector(".style-row-swatches");
+  if (swatchesEl) swatchesEl.innerHTML = swatchesHtml;
+  const nameDisplay = row.querySelector(".style-row-name");
+  if (nameDisplay) {
+    const bound = describeBinding(uri, kind);
+    nameDisplay.innerHTML = `${esc(name)}${bound ? ` <span class="style-row-bound">${esc(bound)}</span>` : ""}`;
+  }
+  // Replace the "(unsaved)" placeholder with the real URI line.
+  const placeholder = row.querySelector(".style-row-uri-placeholder");
+  if (placeholder) {
+    const uriEl = document.createElement("div");
+    uriEl.className = "style-row-uri";
+    uriEl.textContent = uri;
+    placeholder.replaceWith(uriEl);
+  } else {
+    const uriEl = row.querySelector(".style-row-uri");
+    if (uriEl) uriEl.textContent = uri;
+  }
+  // Update the bound-row outline based on bindings.
+  row.classList.toggle("is-bound", !!describeBinding(uri, kind));
+}
+
+// Bind the (auto-saved) pack to its matching diagram-level slot. Flushes
+// any pending auto-save first so the persisted state matches what's
+// about to be applied.
 async function applyEditedPack(): Promise<void> {
   if (!editedPack) return;
-  const buttons = stylesList.querySelectorAll<HTMLButtonElement>(".style-row.is-open [data-editor-action]");
-  buttons.forEach((b) => { b.disabled = true; });
-  try {
-    const rec = await styleStore.save(editedPack);
-    showMessage(`saved · ${rec.slug}`, "ok");
-    editingNewKind = null;
-    activePackUri = rec.uri;
-    const matchingSlot: "canvasStyleUri" | "objectStyleUri" =
-      rec.pack.kind === "canvas" ? "canvasStyleUri" : "objectStyleUri";
-    state[matchingSlot] = rec.uri;
-    saveDraft();
-    await applyBindings();
-    refreshDiagramPackPickers();
-    refreshStylesPane();
-    showMessage(`bound · ${rec.slug} (${rec.pack.kind})`, "ok");
-  } catch (err) {
-    console.warn("apply failed", err);
-    showMessage("apply failed", "warn");
-  } finally {
-    buttons.forEach((b) => { b.disabled = false; });
-  }
+  if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+  await runAutoSave();
+  const uri = activePackUri;
+  if (!uri || !editedPack) return;
+  const matchingSlot: "canvasStyleUri" | "objectStyleUri" =
+    editedPack.kind === "canvas" ? "canvasStyleUri" : "objectStyleUri";
+  state[matchingSlot] = uri;
+  saveDraft();
+  await applyBindings();
+  refreshDiagramPackPickers();
+  refreshStylesPane();
+  showMessage(`bound · ${styleNs.slugFromUri(uri)} (${editedPack.kind})`, "ok");
 }
 
 function newStylePack(kind: StyleKind): void {

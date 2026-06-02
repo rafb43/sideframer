@@ -618,6 +618,15 @@ body { min-height: 100vh; }
   align-items: center;
 }
 
+.style-editor-autosave {
+  flex: 1 1 auto;
+  font-size: 10.5px;
+  color: var(--mute);
+  letter-spacing: 0.4px;
+  text-align: right;
+  margin-right: 8px;
+}
+
 .style-token-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
