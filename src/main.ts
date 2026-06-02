@@ -44,8 +44,6 @@ interface Box {
   styleUri?: string | null;
 }
 
-type Background = "clean" | "grid" | "sections" | "diagonals" | "gradient";
-
 type Mode = "gallery" | "view" | "draw" | "connect" | "styles";
 const MODES: Mode[] = ["gallery", "view", "draw", "connect", "styles"];
 
@@ -63,9 +61,13 @@ const MODES: Mode[] = ["gallery", "view", "draw", "connect", "styles"];
 // SVG so PNG export carries the brand.
 
 interface CanvasTokens {
-  bg: string;
+  bgMode: string;          // one of BG_MODE_OPTIONS
+  bg: string;              // base canvas color (all bg modes)
+  gradientFrom: string;    // only used when bgMode === "gradient"
+  gradientTo: string;
+  frameStroke: string;     // the padded-area frame rectangle
+  axisInk: string;         // DEPENDENCIES / INPUT / OUTPUT / SIDE-EFFECTS labels
   fontFamily: string;
-  axisInk: string;
 }
 
 interface ObjectTokens {
@@ -77,10 +79,16 @@ interface ObjectTokens {
   arrowFill: string;
 }
 
+const BG_MODE_OPTIONS = ["clean", "grid", "sections", "diagonals", "gradient"] as const;
+
 const DEFAULT_CANVAS_TOKENS: CanvasTokens = {
+  bgMode: "grid",
   bg: "#fbfaf6",
-  fontFamily: "Arial, Helvetica, sans-serif",
+  gradientFrom: "#ffffff",
+  gradientTo: "#efe7d2",
+  frameStroke: "#c8c4b8",
   axisInk: "#8a8678",
+  fontFamily: "Arial, Helvetica, sans-serif",
 };
 
 const DEFAULT_OBJECT_TOKENS: ObjectTokens = {
@@ -106,16 +114,21 @@ const FONT_FAMILY_OPTIONS: { label: string; value: string }[] = [
 ];
 
 type CanvasTokenDef =
-  | { name: keyof CanvasTokens; label: string; control: "color"; default: string }
-  | { name: keyof CanvasTokens; label: string; control: "font";  default: string };
+  | { name: keyof CanvasTokens; label: string; control: "color";  default: string }
+  | { name: keyof CanvasTokens; label: string; control: "font";   default: string }
+  | { name: keyof CanvasTokens; label: string; control: "bgmode"; default: string };
 
 type ObjectTokenDef =
   | { name: keyof ObjectTokens; label: string; control: "color"; default: string };
 
 const CANVAS_TOKEN_DEFS: CanvasTokenDef[] = [
-  { name: "bg",         label: "canvas bg",   control: "color", default: DEFAULT_CANVAS_TOKENS.bg },
-  { name: "axisInk",    label: "axis labels", control: "color", default: DEFAULT_CANVAS_TOKENS.axisInk },
-  { name: "fontFamily", label: "font",        control: "font",  default: DEFAULT_CANVAS_TOKENS.fontFamily },
+  { name: "bgMode",       label: "background",    control: "bgmode", default: DEFAULT_CANVAS_TOKENS.bgMode },
+  { name: "bg",           label: "canvas color",  control: "color",  default: DEFAULT_CANVAS_TOKENS.bg },
+  { name: "gradientFrom", label: "gradient from", control: "color",  default: DEFAULT_CANVAS_TOKENS.gradientFrom },
+  { name: "gradientTo",   label: "gradient to",   control: "color",  default: DEFAULT_CANVAS_TOKENS.gradientTo },
+  { name: "frameStroke",  label: "frame line",    control: "color",  default: DEFAULT_CANVAS_TOKENS.frameStroke },
+  { name: "axisInk",      label: "axis labels",   control: "color",  default: DEFAULT_CANVAS_TOKENS.axisInk },
+  { name: "fontFamily",   label: "font",          control: "font",   default: DEFAULT_CANVAS_TOKENS.fontFamily },
 ];
 
 const OBJECT_TOKEN_DEFS: ObjectTokenDef[] = [
@@ -146,9 +159,6 @@ interface DiagramState {
   centerSublabel: string;
   centerX: number;
   centerY: number;
-  background: Background;
-  gradientFrom: string;
-  gradientTo: string;
   boxes: Box[];
   connectors: Connector[];
   /**
@@ -163,9 +173,6 @@ interface DiagramState {
   createdAt?: number;
   updatedAt?: number;
 }
-
-const DEFAULT_GRADIENT_FROM = "#ffffff";
-const DEFAULT_GRADIENT_TO = "#efe7d2";
 
 const CENTER_ID = "@center";
 
@@ -190,9 +197,6 @@ const state: DiagramState = {
   centerSublabel: "",
   centerX: CENTER_X_DEFAULT,
   centerY: CENTER_Y_DEFAULT,
-  background: "grid",
-  gradientFrom: DEFAULT_GRADIENT_FROM,
-  gradientTo: DEFAULT_GRADIENT_TO,
   boxes: [],
   connectors: [],
 };
@@ -219,11 +223,6 @@ let shapeField!: HTMLElement;
 let inspectorFooter!: HTMLElement;
 let boxLabelInput!: HTMLInputElement;
 let boxSublabelInput!: HTMLInputElement;
-let bgSelect!: HTMLSelectElement;
-let gradientFromInput!: HTMLInputElement;
-let gradientToInput!: HTMLInputElement;
-let gradientFromField!: HTMLLabelElement;
-let gradientToField!: HTMLLabelElement;
 let shapeGrid!: HTMLDivElement;
 let modeSeg!: HTMLDivElement;
 let hintSpan!: HTMLSpanElement;
@@ -329,11 +328,16 @@ function writeStateToHash(): void {
 function normalizeState(): void {
   if (!Array.isArray(state.boxes)) state.boxes = [];
   if (!Array.isArray(state.connectors)) state.connectors = [];
-  const legacy = (state as unknown as { theme?: string }).theme;
-  if (typeof legacy === "string" && !state.scene) state.scene = legacy;
+  const legacyTheme = (state as unknown as { theme?: string }).theme;
+  if (typeof legacyTheme === "string" && !state.scene) state.scene = legacyTheme;
   delete (state as unknown as { theme?: string }).theme;
-  if (!isHexColor(state.gradientFrom)) state.gradientFrom = DEFAULT_GRADIENT_FROM;
-  if (!isHexColor(state.gradientTo)) state.gradientTo = DEFAULT_GRADIENT_TO;
+  // Background mode + gradient colors used to live on the diagram; they're
+  // now part of the canvas style pack. Drop any pre-split fields so they
+  // stop riding in the URL hash.
+  const legacy = state as unknown as Record<string, unknown>;
+  delete legacy.background;
+  delete legacy.gradientFrom;
+  delete legacy.gradientTo;
   if (typeof state.centerX !== "number" || !Number.isFinite(state.centerX)) state.centerX = CENTER_X_DEFAULT;
   if (typeof state.centerY !== "number" || !Number.isFinite(state.centerY)) state.centerY = CENTER_Y_DEFAULT;
   clampCenter();
@@ -342,16 +346,6 @@ function normalizeState(): void {
 function clampCenter(): void {
   state.centerX = Math.max(PAD + 8, Math.min(CANVAS_W - PAD - CENTER_W - 8, state.centerX));
   state.centerY = Math.max(PAD + 8, Math.min(CANVAS_H - PAD - CENTER_H - 8, state.centerY));
-}
-
-function isHexColor(v: unknown): v is string {
-  return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);
-}
-
-function syncGradientControls(): void {
-  const show = state.background === "gradient";
-  gradientFromField.hidden = !show;
-  gradientToField.hidden = !show;
 }
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -393,24 +387,6 @@ function bootDiagrammer(): void {
             <label class="field">
               <span>scene</span>
               <input id="scene-input" type="text" />
-            </label>
-            <label class="field">
-              <span>background</span>
-              <select id="bg-select">
-                <option value="clean">clean</option>
-                <option value="grid">grid</option>
-                <option value="sections">sections</option>
-                <option value="diagonals">diagonals</option>
-                <option value="gradient">gradient</option>
-              </select>
-            </label>
-            <label class="field field-color" id="gradient-from-field" hidden>
-              <span>from</span>
-              <input id="gradient-from-input" type="color" />
-            </label>
-            <label class="field field-color" id="gradient-to-field" hidden>
-              <span>to</span>
-              <input id="gradient-to-input" type="color" />
             </label>
             <label class="field">
               <span>canvas style</span>
@@ -514,11 +490,6 @@ function bootDiagrammer(): void {
   inspectorFooter = document.querySelector<HTMLElement>("#inspector-footer")!;
   boxLabelInput = document.querySelector<HTMLInputElement>("#box-label-input")!;
   boxSublabelInput = document.querySelector<HTMLInputElement>("#box-sublabel-input")!;
-  bgSelect = document.querySelector<HTMLSelectElement>("#bg-select")!;
-  gradientFromInput = document.querySelector<HTMLInputElement>("#gradient-from-input")!;
-  gradientToInput = document.querySelector<HTMLInputElement>("#gradient-to-input")!;
-  gradientFromField = document.querySelector<HTMLLabelElement>("#gradient-from-field")!;
-  gradientToField = document.querySelector<HTMLLabelElement>("#gradient-to-field")!;
   shapeGrid = document.querySelector<HTMLDivElement>("#shape-grid")!;
   modeSeg = document.querySelector<HTMLDivElement>("#mode-seg")!;
   hintSpan = document.querySelector<HTMLSpanElement>("#hint")!;
@@ -542,10 +513,6 @@ function bootDiagrammer(): void {
   normalizeState();
 
   sceneInput.value = state.scene;
-  bgSelect.value = state.background;
-  gradientFromInput.value = state.gradientFrom;
-  gradientToInput.value = state.gradientTo;
-  syncGradientControls();
 
   // Mode precedence: URL hash > derived default (view if non-empty, draw if empty).
   currentMode = decodeModeFromHash()
@@ -689,19 +656,6 @@ function updateModeUI(): void {
 
 function wireEvents(): void {
   sceneInput.addEventListener("input", () => { state.scene = sceneInput.value; render(); });
-  bgSelect.addEventListener("change", () => {
-    state.background = bgSelect.value as Background;
-    syncGradientControls();
-    render();
-  });
-  gradientFromInput.addEventListener("input", () => {
-    state.gradientFrom = gradientFromInput.value;
-    render();
-  });
-  gradientToInput.addEventListener("input", () => {
-    state.gradientTo = gradientToInput.value;
-    render();
-  });
 
   shapeGrid.addEventListener("click", (e) => {
     const btn = (e.target as Element).closest("button[data-shape]") as HTMLButtonElement | null;
@@ -915,9 +869,6 @@ function loadDiagramState(newState: Partial<DiagramState>): void {
   state.centerSublabel = "";
   state.centerX = CENTER_X_DEFAULT;
   state.centerY = CENTER_Y_DEFAULT;
-  state.background = "grid";
-  state.gradientFrom = DEFAULT_GRADIENT_FROM;
-  state.gradientTo = DEFAULT_GRADIENT_TO;
   state.boxes = [];
   state.connectors = [];
   state.canvasStyleUri = null;
@@ -934,10 +885,6 @@ function loadDiagramState(newState: Partial<DiagramState>): void {
   delete (state as unknown as { styleUri?: string | null }).styleUri;
   normalizeState();
   sceneInput.value = state.scene;
-  bgSelect.value = state.background;
-  gradientFromInput.value = state.gradientFrom;
-  gradientToInput.value = state.gradientTo;
-  syncGradientControls();
   selectedId = null;
   selectedConnectorId = null;
   selectedCenter = false;
@@ -1220,6 +1167,10 @@ function openStyleEditor(_uri: string | null, pack: StylePack): void {
   primeActiveTokensFor(editedPack);
   styleEditor.hidden = false;
   const defs = tokenDefsFor(kind);
+  // For canvas packs the gradient rows are only relevant when bgMode is
+  // `gradient`; tag them so CSS can hide them otherwise.
+  const currentBgMode = editedPack.tokens?.bgMode ?? DEFAULT_CANVAS_TOKENS.bgMode;
+  const gridClass = `style-token-grid${currentBgMode === "gradient" ? " is-gradient" : ""}`;
   styleEditor.innerHTML = `
     <header class="style-editor-header">
       <label class="field">
@@ -1233,21 +1184,33 @@ function openStyleEditor(_uri: string | null, pack: StylePack): void {
         <button class="btn-mini" type="button" id="style-cancel">cancel</button>
       </div>
     </header>
-    <div class="style-token-grid">
+    <div class="${gridClass}">
       ${defs.map((t) => {
         const v = editedPack!.tokens?.[t.name] ?? t.default;
+        const isGradientRow = t.name === "gradientFrom" || t.name === "gradientTo";
+        const extraCls = isGradientRow ? " style-token-row-gradient" : "";
         if (t.control === "font") {
           const opts = FONT_FAMILY_OPTIONS.map((o) =>
             `<option value="${esc(o.value)}"${o.value === v ? " selected" : ""}>${esc(o.label)}</option>`
           ).join("");
           return `
-            <label class="field style-token-row">
+            <label class="field style-token-row${extraCls}">
+              <span>${esc(t.label)}<br><code>${esc(t.name)}</code></span>
+              <select data-token="${esc(t.name)}">${opts}</select>
+            </label>`;
+        }
+        if (t.control === "bgmode") {
+          const opts = BG_MODE_OPTIONS.map((m) =>
+            `<option value="${esc(m)}"${m === v ? " selected" : ""}>${esc(m)}</option>`
+          ).join("");
+          return `
+            <label class="field style-token-row${extraCls}">
               <span>${esc(t.label)}<br><code>${esc(t.name)}</code></span>
               <select data-token="${esc(t.name)}">${opts}</select>
             </label>`;
         }
         return `
-          <label class="field field-color style-token-row">
+          <label class="field field-color style-token-row${extraCls}">
             <span>${esc(t.label)}<br><code>${esc(t.name)}</code></span>
             <span class="color-pair">
               <input type="color" data-token="${esc(t.name)}" data-control="color" value="${esc(v)}"/>
@@ -1303,6 +1266,11 @@ function writeEditedToken(name: string, value: string): void {
   if (editedPack.kind === "canvas") {
     if ((CANVAS_TOKEN_DEFS as { name: string }[]).some((d) => d.name === name)) {
       (activeCanvasTokens as unknown as Record<string, string>)[name] = value;
+    }
+    // Toggle gradient-row visibility when background mode changes.
+    if (name === "bgMode") {
+      const grid = styleEditor.querySelector(".style-token-grid");
+      if (grid) grid.classList.toggle("is-gradient", value === "gradient");
     }
   } else {
     if ((OBJECT_TOKEN_DEFS as { name: string }[]).some((d) => d.name === name)) {
@@ -1609,7 +1577,7 @@ function buildSVG(): string {
 
   <rect class="frame" x="${PAD}" y="${PAD}"
         width="${CANVAS_W - 2 * PAD}" height="${CANVAS_H - 2 * PAD}"
-        fill="none" stroke="#c8c4b8" stroke-width="2" rx="6"/>
+        fill="none" stroke="${C.frameStroke}" stroke-width="2" rx="6"/>
 
   <text class="axis" x="${CANVAS_W / 2}" y="${PAD - 30}" text-anchor="middle">DEPENDENCIES</text>
   <text class="axis" x="${CANVAS_W / 2}" y="${CANVAS_H - PAD + 48}" text-anchor="middle">SIDE-EFFECTS</text>
@@ -1644,8 +1612,8 @@ function buildSVG(): string {
 }
 
 function renderBackground(): string {
-  const T = { bg: activeCanvasTokens.bg };
-  switch (state.background) {
+  const T = activeCanvasTokens;
+  switch (T.bgMode) {
     case "clean":
       return `<rect width="100%" height="100%" fill="${T.bg}"/>`;
     case "grid":
@@ -1674,8 +1642,6 @@ function renderBackground(): string {
     case "gradient": {
       const gcx = state.centerX + CENTER_W / 2;
       const gcy = state.centerY + CENTER_H / 2;
-      // Reach the farthest canvas corner so the falloff covers the whole frame
-      // regardless of where the user dragged the center.
       const gr = Math.max(
         Math.hypot(gcx, gcy),
         Math.hypot(CANVAS_W - gcx, gcy),
@@ -1685,12 +1651,14 @@ function renderBackground(): string {
       return `
         <defs>
           <radialGradient id="bg-grad" cx="${gcx}" cy="${gcy}" r="${gr}" fx="${gcx}" fy="${gcy}" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="${esc(state.gradientFrom)}"/>
-            <stop offset="100%" stop-color="${esc(state.gradientTo)}"/>
+            <stop offset="0%" stop-color="${esc(T.gradientFrom)}"/>
+            <stop offset="100%" stop-color="${esc(T.gradientTo)}"/>
           </radialGradient>
         </defs>
         <rect width="100%" height="100%" fill="url(#bg-grad)"/>`;
     }
+    default:
+      return `<rect width="100%" height="100%" fill="${T.bg}"/>`;
   }
 }
 

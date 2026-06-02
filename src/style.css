@@ -460,10 +460,12 @@ body { min-height: 100vh; }
 .style-row-name {
   font-size: 13px;
   color: var(--ink);
-  word-break: break-word;
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 .style-row-bound {
@@ -575,6 +577,10 @@ body { min-height: 100vh; }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 10px;
+}
+
+.style-token-grid:not(.is-gradient) .style-token-row-gradient {
+  display: none;
 }
 
 .style-token-row {
