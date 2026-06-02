@@ -662,12 +662,14 @@ body { min-height: 100vh; }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* Paired color picker + hex text input so the user can copy/paste hex
-   values between packs without round-tripping through the picker. */
+/* Each color row: label flexes to fill, then the hex text input, then
+   the color swatch anchored to the right so swatches line up across
+   every row in the editor. */
 .style-token-row .color-pair {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
 }
 
 .style-token-row .color-pair input[type="color"] {

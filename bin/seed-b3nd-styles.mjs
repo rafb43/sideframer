@@ -67,7 +67,6 @@ const packs = [
       bg: BLACK,
       frameStroke: DARK_LINE,
       axisInk: DARK_INK_MUTE,
-      fontFamily: SYSTEM_FONT,
       gradientFrom: "#15151a",
       gradientTo: BLACK,
     },
@@ -80,7 +79,6 @@ const packs = [
       bg: WHITE,
       frameStroke: LIGHT_LINE,
       axisInk: LIGHT_INK_MUTE,
-      fontFamily: SYSTEM_FONT,
       gradientFrom: WHITE,
       gradientTo: "#f0ece4",
     },
@@ -95,6 +93,7 @@ const packs = [
       muteInk: DARK_INK_DIM,
       connectorStroke: DARK_INK_MUTE,
       arrowFill: GREEN,
+      fontFamily: SYSTEM_FONT,
     },
   },
   {
@@ -107,6 +106,7 @@ const packs = [
       muteInk: LIGHT_INK_DIM,
       connectorStroke: LIGHT_INK_MUTE,
       arrowFill: PINK_DEEP,
+      fontFamily: SYSTEM_FONT,
     },
   },
 ];

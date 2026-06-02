@@ -67,7 +67,6 @@ interface CanvasTokens {
   gradientTo: string;
   frameStroke: string;     // the padded-area frame rectangle
   axisInk: string;         // DEPENDENCIES / INPUT / OUTPUT / SIDE-EFFECTS labels
-  fontFamily: string;
 }
 
 interface ObjectTokens {
@@ -77,6 +76,7 @@ interface ObjectTokens {
   muteInk: string;
   connectorStroke: string;
   arrowFill: string;
+  fontFamily: string;      // applies to all labels — moved from canvas
 }
 
 const BG_MODE_OPTIONS = ["clean", "grid", "sections", "diagonals", "gradient"] as const;
@@ -88,7 +88,6 @@ const DEFAULT_CANVAS_TOKENS: CanvasTokens = {
   gradientTo: "#efe7d2",
   frameStroke: "#c8c4b8",
   axisInk: "#8a8678",
-  fontFamily: "Arial, Helvetica, sans-serif",
 };
 
 const DEFAULT_OBJECT_TOKENS: ObjectTokens = {
@@ -98,6 +97,7 @@ const DEFAULT_OBJECT_TOKENS: ObjectTokens = {
   muteInk: "#6b685f",
   connectorStroke: "#54524c",
   arrowFill: "#54524c",
+  fontFamily: "Arial, Helvetica, sans-serif",
 };
 
 let activeCanvasTokens: CanvasTokens = { ...DEFAULT_CANVAS_TOKENS };
@@ -115,11 +115,7 @@ const FONT_FAMILY_OPTIONS: { label: string; value: string }[] = [
 
 type CanvasTokenDef =
   | { name: keyof CanvasTokens; label: string; control: "color";  default: string }
-  | { name: keyof CanvasTokens; label: string; control: "font";   default: string }
   | { name: keyof CanvasTokens; label: string; control: "bgmode"; default: string };
-
-type ObjectTokenDef =
-  | { name: keyof ObjectTokens; label: string; control: "color"; default: string };
 
 const CANVAS_TOKEN_DEFS: CanvasTokenDef[] = [
   { name: "bgMode",       label: "background",    control: "bgmode", default: DEFAULT_CANVAS_TOKENS.bgMode },
@@ -128,8 +124,11 @@ const CANVAS_TOKEN_DEFS: CanvasTokenDef[] = [
   { name: "gradientTo",   label: "gradient to",   control: "color",  default: DEFAULT_CANVAS_TOKENS.gradientTo },
   { name: "frameStroke",  label: "frame line",    control: "color",  default: DEFAULT_CANVAS_TOKENS.frameStroke },
   { name: "axisInk",      label: "axis labels",   control: "color",  default: DEFAULT_CANVAS_TOKENS.axisInk },
-  { name: "fontFamily",   label: "font",          control: "font",   default: DEFAULT_CANVAS_TOKENS.fontFamily },
 ];
+
+type ObjectTokenDef =
+  | { name: keyof ObjectTokens; label: string; control: "color"; default: string }
+  | { name: keyof ObjectTokens; label: string; control: "font";  default: string };
 
 const OBJECT_TOKEN_DEFS: ObjectTokenDef[] = [
   { name: "fill",            label: "fill",         control: "color", default: DEFAULT_OBJECT_TOKENS.fill },
@@ -138,6 +137,7 @@ const OBJECT_TOKEN_DEFS: ObjectTokenDef[] = [
   { name: "muteInk",         label: "sublabel",     control: "color", default: DEFAULT_OBJECT_TOKENS.muteInk },
   { name: "connectorStroke", label: "connector",    control: "color", default: DEFAULT_OBJECT_TOKENS.connectorStroke },
   { name: "arrowFill",       label: "arrow",        control: "color", default: DEFAULT_OBJECT_TOKENS.arrowFill },
+  { name: "fontFamily",      label: "font",         control: "font",  default: DEFAULT_OBJECT_TOKENS.fontFamily },
 ];
 
 function tokenDefsFor(kind: StyleKind): (CanvasTokenDef | ObjectTokenDef)[] {
@@ -1248,10 +1248,10 @@ function renderEditorBody(pack: StylePack, canApply: boolean): string {
           <label class="field field-color style-token-row${extraCls}">
             <span>${esc(t.label)}<br><code>${esc(t.name)}</code></span>
             <span class="color-pair">
-              <input type="color" data-token="${esc(t.name)}" data-control="color" value="${esc(v)}"/>
               <input type="text" class="hex-text" data-token="${esc(t.name)}" data-control="hex"
                      value="${esc(v)}" maxlength="7" spellcheck="false"
                      autocapitalize="off" autocomplete="off"/>
+              <input type="color" data-token="${esc(t.name)}" data-control="color" value="${esc(v)}"/>
             </span>
           </label>`;
       }).join("")}
@@ -1669,7 +1669,8 @@ function render(): void {
 function buildSVG(): string {
   const C = activeCanvasTokens;
   // The center uses the diagram's default object pack, never a per-box
-  // override (the centerpiece isn't a Box).
+  // override (the centerpiece isn't a Box). Axis/scene labels share the
+  // diagram-default font for consistency with the centerpiece.
   const centerObj = activeObjectTokens;
   const sceneStr = state.scene ? `scene:  ${esc(state.scene)}` : "";
   const centerConnectSource = currentMode === "connect" && connectFrom === CENTER_ID;
@@ -1677,7 +1678,7 @@ function buildSVG(): string {
   const centerStroke = centerSel ? "#3b82f6" : centerConnectSource ? "#10b981" : centerObj.stroke;
   const centerSw = centerSel ? 3 : 2.5;
   const centerDashed = centerConnectSource;
-  const ff = esc(C.fontFamily);
+  const ff = esc(centerObj.fontFamily);
   return `
 <svg id="svg-root" class="mode-${currentMode}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}" width="${CANVAS_W}" height="${CANVAS_H}">
   <style>
@@ -1784,7 +1785,7 @@ function renderBackground(): string {
 
 function renderBox(b: Box): string {
   const T = resolveObjectTokens(b);
-  const ff = esc(activeCanvasTokens.fontFamily);
+  const ff = esc(T.fontFamily);
   const sel = b.id === selectedId;
   const isConnectSource = currentMode === "connect" && connectFrom === b.id;
   const stroke = sel ? "#3b82f6" : isConnectSource ? "#10b981" : T.stroke;
