@@ -520,6 +520,10 @@ body { min-height: 100vh; }
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Let grid tracks shrink below the SVG's intrinsic 52px width so we get
+     four columns inside the 220px inspector instead of overflowing right. */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .shape-grid button.active {
@@ -534,6 +538,9 @@ body { min-height: 100vh; }
 .shape-grid svg {
   display: block;
   pointer-events: none;
+  width: 100%;
+  height: auto;
+  max-height: 28px;
 }
 
 .inspector-footer {
