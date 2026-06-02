@@ -745,24 +745,15 @@ async function refreshGallery(): Promise<void> {
   try {
     const items = await diagramStore.list();
     if (token !== galleryToken) return;
-    // Load every record up front so we can sort by createdAt before rendering.
-    // Records without a createdAt (saved before this field existed) sort last.
-    const loaded = await Promise.all(items.map(async ({ uri, slug }) => {
-      try {
-        const rec = await diagramStore.load(uri);
-        const diagram = rec?.diagram as Partial<DiagramState> | undefined;
-        const createdAt = typeof diagram?.createdAt === "number" ? diagram.createdAt : 0;
-        return { uri, slug, diagram, createdAt };
-      } catch {
-        return { uri, slug, diagram: undefined, createdAt: 0 };
-      }
-    }));
-    if (token !== galleryToken) return;
-    loaded.sort((a, b) => (b.createdAt - a.createdAt) || a.slug.localeCompare(b.slug));
     galleryList.innerHTML = "";
-    galleryEmpty.hidden = loaded.length > 0;
-    galleryCount.textContent = loaded.length > 0 ? `${loaded.length} saved` : "";
-    for (const { uri, slug, diagram } of loaded) {
+    galleryEmpty.hidden = items.length > 0;
+    galleryCount.textContent = items.length > 0 ? `${items.length} saved` : "";
+    // Render placeholder tiles immediately (alphabetical by slug) so the user
+    // sees progress, then kick off all loads in parallel. Once every load
+    // finishes, sort by createdAt desc and reorder the LIs in place.
+    const tiles = new Map<string, HTMLLIElement>();
+    const orderedSlugs = [...items].sort((a, b) => a.slug.localeCompare(b.slug));
+    for (const { uri, slug } of orderedSlugs) {
       const li = document.createElement("li");
       li.className = "gallery-tile";
       li.dataset.uri = uri;
@@ -772,10 +763,38 @@ async function refreshGallery(): Promise<void> {
           <span class="g-slug">${esc(slug)}</span>
           <span class="g-uri">${esc(uri)}</span>
         </div>
-        <div class="g-preview${diagram ? "" : " is-empty"}" data-preview>${
-          diagram ? buildPreviewSVG(diagram) : "no preview"
-        }</div>`;
+        <div class="g-preview is-empty" data-preview>…</div>`;
       galleryList.appendChild(li);
+      tiles.set(uri, li);
+    }
+    const loaded = await Promise.all(items.map(async ({ uri, slug }) => {
+      try {
+        const rec = await diagramStore.load(uri);
+        if (token !== galleryToken) return { uri, slug, diagram: undefined, createdAt: 0 };
+        const diagram = rec?.diagram as Partial<DiagramState> | undefined;
+        const createdAt = typeof diagram?.createdAt === "number" ? diagram.createdAt : 0;
+        const slot = tiles.get(uri)?.querySelector<HTMLDivElement>("[data-preview]");
+        if (slot) {
+          if (diagram) {
+            slot.classList.remove("is-empty");
+            slot.innerHTML = buildPreviewSVG(diagram);
+          } else {
+            slot.textContent = "no preview";
+          }
+        }
+        return { uri, slug, diagram, createdAt };
+      } catch {
+        const slot = tiles.get(uri)?.querySelector<HTMLDivElement>("[data-preview]");
+        if (slot) slot.textContent = "preview failed";
+        return { uri, slug, diagram: undefined, createdAt: 0 };
+      }
+    }));
+    if (token !== galleryToken) return;
+    loaded.sort((a, b) => (b.createdAt - a.createdAt) || a.slug.localeCompare(b.slug));
+    // Reorder existing LIs in place — appending an existing child moves it.
+    for (const { uri } of loaded) {
+      const li = tiles.get(uri);
+      if (li) galleryList.appendChild(li);
     }
   } catch (e) {
     if (token !== galleryToken) return;
@@ -1368,8 +1387,14 @@ function positionInspector(): void {
   }
   if (left < 16) left = 16;
 
+  // shapeGridEl gives us the y-offset of the shape grid inside the inspector,
+  // so we can line up the *shape grid* with the target's top edge rather than
+  // the inspector's top edge (which would put the label inputs above the box).
+  // When the shape field is hidden (center selected) we skip the offset —
+  // a hidden element's bounding rect is at (0,0) which would otherwise yield a
+  // huge negative offset and pin the inspector to the bottom of the viewport.
   const shapeGridEl = document.querySelector<HTMLDivElement>("#shape-grid");
-  const shapeOffsetY = shapeGridEl
+  const shapeOffsetY = shapeGridEl && shapeField && !shapeField.hidden
     ? shapeGridEl.getBoundingClientRect().top - insRect.top
     : 0;
   let top = rect.top - shapeOffsetY;
