@@ -685,6 +685,21 @@ function wireEvents(): void {
 }
 
 function loadDiagramState(newState: Partial<DiagramState>): void {
+  // Reset to defaults first so fields absent from the new diagram (e.g. an
+  // older save that pre-dates centerX/centerY/gradientFrom/etc.) don't leak
+  // in from the previously loaded diagram.
+  state.scene = "perspective";
+  state.centerLabel = "the system";
+  state.centerSublabel = "";
+  state.centerX = CENTER_X_DEFAULT;
+  state.centerY = CENTER_Y_DEFAULT;
+  state.background = "grid";
+  state.gradientFrom = DEFAULT_GRADIENT_FROM;
+  state.gradientTo = DEFAULT_GRADIENT_TO;
+  state.boxes = [];
+  state.connectors = [];
+  delete state.createdAt;
+  delete state.updatedAt;
   Object.assign(state, newState);
   normalizeState();
   sceneInput.value = state.scene;
