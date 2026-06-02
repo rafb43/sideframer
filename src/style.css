@@ -546,6 +546,10 @@ body { min-height: 100vh; }
   flex-direction: column;
 }
 
+.page-overlay[hidden] {
+  display: none;
+}
+
 .page-overlay-bar {
   position: sticky;
   top: 0;
