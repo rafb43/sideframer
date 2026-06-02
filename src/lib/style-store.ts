@@ -7,8 +7,18 @@ import { type Namespace, sluggify } from "./sluggify.ts";
 // the binding is live — updating the pack updates every diagram that points
 // at it. Snapshots happen only on PNG export.
 
+export type StyleKind = "canvas" | "object";
+
 export interface StylePack {
   name: string;
+  /**
+   * What the pack reskins. `canvas` packs control diagram-wide tokens
+   * (background, typography, axis labels); `object` packs control box /
+   * line / center tokens and can also be applied per-box as overrides.
+   * Packs without a kind (older saves) are treated as `object` —
+   * recreate them through the editor to claim a different role.
+   */
+  kind: StyleKind;
   tokens: Record<string, string>;
   createdAt?: number;
   updatedAt?: number;

@@ -1,6 +1,6 @@
 import "./style.css";
 import { createClientRig, DiagramStore } from "./lib/diagram-store.ts";
-import { createStyleRig, type StylePack, StyleStore } from "./lib/style-store.ts";
+import { createStyleRig, type StyleKind, type StylePack, StyleStore } from "./lib/style-store.ts";
 import { createNamespace } from "./lib/sluggify.ts";
 // design-system and help pages are dynamic-imported on demand (see setPage)
 // to keep the diagrammer bundle light.
@@ -40,6 +40,8 @@ interface Box {
   y: number;
   w: number;
   h: number;
+  /** Per-box object-pack override. Null/absent → use the diagram default. */
+  styleUri?: string | null;
 }
 
 type Background = "clean" | "grid" | "sections" | "diagonals" | "gradient";
@@ -47,38 +49,54 @@ type Background = "clean" | "grid" | "sections" | "diagonals" | "gradient";
 type Mode = "gallery" | "view" | "draw" | "connect" | "styles";
 const MODES: Mode[] = ["gallery", "view", "draw", "connect", "styles"];
 
-// Canvas-side tokens — the palette and typography the diagram itself
-// renders with. Brand packs are about the diagram, not the app chrome:
-// the surrounding shell stays in its own CSS-variable world. These
-// values are resolved at render time and stamped literally into the SVG
-// so PNG export carries them faithfully.
+// Style packs come in two kinds:
+//
+//   canvas — diagram-wide environment (background, typography, axis labels).
+//            Bound once per diagram via `canvasStyleUri`.
+//   object — box / line / center palette (fills, strokes, label inks,
+//            connector colors). Bound diagram-wide as the default via
+//            `objectStyleUri`, with optional per-box overrides via
+//            `Box.styleUri` — so a diagram can carry e.g. `entitya-main`
+//            and `entitya-secondary` packs and apply them per shape.
+//
+// All tokens are resolved at render time and stamped literally into the
+// SVG so PNG export carries the brand.
+
 interface CanvasTokens {
   bg: string;
-  boxFill: string;
-  boxStroke: string;
-  centerFill: string;
-  centerStroke: string;
-  connectorStroke: string;
-  arrowFill: string;
+  fontFamily: string;
+  axisInk: string;
+}
+
+interface ObjectTokens {
+  fill: string;
+  stroke: string;
   ink: string;
   muteInk: string;
-  fontFamily: string;
+  connectorStroke: string;
+  arrowFill: string;
 }
 
 const DEFAULT_CANVAS_TOKENS: CanvasTokens = {
   bg: "#fbfaf6",
-  boxFill: "#ffffff",
-  boxStroke: "#54524c",
-  centerFill: "#ffffff",
-  centerStroke: "#2a2a28",
-  connectorStroke: "#54524c",
-  arrowFill: "#54524c",
+  fontFamily: "Arial, Helvetica, sans-serif",
+  axisInk: "#8a8678",
+};
+
+const DEFAULT_OBJECT_TOKENS: ObjectTokens = {
+  fill: "#ffffff",
+  stroke: "#54524c",
   ink: "#2a2a28",
   muteInk: "#6b685f",
-  fontFamily: "Arial, Helvetica, sans-serif",
+  connectorStroke: "#54524c",
+  arrowFill: "#54524c",
 };
 
 let activeCanvasTokens: CanvasTokens = { ...DEFAULT_CANVAS_TOKENS };
+let activeObjectTokens: ObjectTokens = { ...DEFAULT_OBJECT_TOKENS };
+// uri → resolved ObjectTokens, populated by `applyBindings` so the
+// renderer can look up per-box overrides synchronously.
+const objectPackCache = new Map<string, ObjectTokens>();
 
 const FONT_FAMILY_OPTIONS: { label: string; value: string }[] = [
   { label: "Helvetica", value: "Arial, Helvetica, sans-serif" },
@@ -87,22 +105,31 @@ const FONT_FAMILY_OPTIONS: { label: string; value: string }[] = [
   { label: "Mono",      value: "ui-monospace, SFMono-Regular, Menlo, monospace" },
 ];
 
-type StyleTokenDef =
-  | { name: keyof CanvasTokens; label: string; kind: "color"; default: string }
-  | { name: keyof CanvasTokens; label: string; kind: "font"; default: string };
+type CanvasTokenDef =
+  | { name: keyof CanvasTokens; label: string; control: "color"; default: string }
+  | { name: keyof CanvasTokens; label: string; control: "font";  default: string };
 
-const STYLE_TOKEN_DEFS: StyleTokenDef[] = [
-  { name: "bg",              label: "canvas bg",     kind: "color", default: DEFAULT_CANVAS_TOKENS.bg },
-  { name: "boxFill",         label: "box fill",      kind: "color", default: DEFAULT_CANVAS_TOKENS.boxFill },
-  { name: "boxStroke",       label: "box stroke",    kind: "color", default: DEFAULT_CANVAS_TOKENS.boxStroke },
-  { name: "centerFill",      label: "center fill",   kind: "color", default: DEFAULT_CANVAS_TOKENS.centerFill },
-  { name: "centerStroke",    label: "center stroke", kind: "color", default: DEFAULT_CANVAS_TOKENS.centerStroke },
-  { name: "connectorStroke", label: "connector",     kind: "color", default: DEFAULT_CANVAS_TOKENS.connectorStroke },
-  { name: "arrowFill",       label: "arrow",         kind: "color", default: DEFAULT_CANVAS_TOKENS.arrowFill },
-  { name: "ink",             label: "ink",           kind: "color", default: DEFAULT_CANVAS_TOKENS.ink },
-  { name: "muteInk",         label: "mute ink",      kind: "color", default: DEFAULT_CANVAS_TOKENS.muteInk },
-  { name: "fontFamily",      label: "font",          kind: "font",  default: DEFAULT_CANVAS_TOKENS.fontFamily },
+type ObjectTokenDef =
+  | { name: keyof ObjectTokens; label: string; control: "color"; default: string };
+
+const CANVAS_TOKEN_DEFS: CanvasTokenDef[] = [
+  { name: "bg",         label: "canvas bg",   control: "color", default: DEFAULT_CANVAS_TOKENS.bg },
+  { name: "axisInk",    label: "axis labels", control: "color", default: DEFAULT_CANVAS_TOKENS.axisInk },
+  { name: "fontFamily", label: "font",        control: "font",  default: DEFAULT_CANVAS_TOKENS.fontFamily },
 ];
+
+const OBJECT_TOKEN_DEFS: ObjectTokenDef[] = [
+  { name: "fill",            label: "fill",         control: "color", default: DEFAULT_OBJECT_TOKENS.fill },
+  { name: "stroke",          label: "stroke",       control: "color", default: DEFAULT_OBJECT_TOKENS.stroke },
+  { name: "ink",             label: "label",        control: "color", default: DEFAULT_OBJECT_TOKENS.ink },
+  { name: "muteInk",         label: "sublabel",     control: "color", default: DEFAULT_OBJECT_TOKENS.muteInk },
+  { name: "connectorStroke", label: "connector",    control: "color", default: DEFAULT_OBJECT_TOKENS.connectorStroke },
+  { name: "arrowFill",       label: "arrow",        control: "color", default: DEFAULT_OBJECT_TOKENS.arrowFill },
+];
+
+function tokenDefsFor(kind: StyleKind): (CanvasTokenDef | ObjectTokenDef)[] {
+  return kind === "canvas" ? CANVAS_TOKEN_DEFS : OBJECT_TOKEN_DEFS;
+}
 
 type Page = "design-system" | "help";
 const PAGES: Page[] = ["design-system", "help"];
@@ -125,12 +152,14 @@ interface DiagramState {
   boxes: Box[];
   connectors: Connector[];
   /**
-   * Live reference to a style pack URI. The diagram does not carry tokens of
-   * its own — the pack is fetched and applied at load time, so updates to the
-   * pack flow through to every diagram pointing at it. Use PNG export when a
-   * frozen snapshot is needed.
+   * Live references to style pack URIs. Canvas covers the diagram's
+   * environment (bg, font, axis labels); object is the default palette for
+   * boxes, lines, and the center — individual boxes may override via
+   * `Box.styleUri`. Packs are not inlined: updates to a pack flow through
+   * to every diagram pointing at it. Use PNG export for snapshots.
    */
-  styleUri?: string | null;
+  canvasStyleUri?: string | null;
+  objectStyleUri?: string | null;
   createdAt?: number;
   updatedAt?: number;
 }
@@ -207,7 +236,9 @@ let stylesEmpty!: HTMLDivElement;
 let stylesError!: HTMLDivElement;
 let stylesCount!: HTMLSpanElement;
 let styleEditor!: HTMLElement;
-let stylePackSelect!: HTMLSelectElement;
+let canvasPackSelect!: HTMLSelectElement;
+let objectPackSelect!: HTMLSelectElement;
+let boxStyleSelect!: HTMLSelectElement;
 
 // ---------------- Persistence ----------------
 
@@ -382,15 +413,20 @@ function bootDiagrammer(): void {
               <input id="gradient-to-input" type="color" />
             </label>
             <label class="field">
-              <span>style pack</span>
-              <select id="style-pack-select"></select>
+              <span>canvas style</span>
+              <select id="canvas-pack-select"></select>
+            </label>
+            <label class="field">
+              <span>object style</span>
+              <select id="object-pack-select"></select>
             </label>
           </div>
           <div class="context-actions-group" data-mode="connect">
             <span class="ctx-note">click two boxes (or the center) to connect · click an arrow to select</span>
           </div>
           <div class="context-actions-group" data-mode="styles">
-            <button id="styles-new" class="btn-mini">+ new pack</button>
+            <button id="styles-new-canvas" class="btn-mini">+ canvas pack</button>
+            <button id="styles-new-object" class="btn-mini">+ object pack</button>
             <button id="styles-refresh" class="btn-mini" title="refresh">↻ refresh</button>
             <span class="ctx-note">edit a pack to set tokens · click ↻ apply to bind it to the current diagram</span>
           </div>
@@ -460,6 +496,10 @@ function bootDiagrammer(): void {
         <span>sublabel</span>
         <input id="box-sublabel-input" type="text" />
       </label>
+      <label class="field" id="box-style-field">
+        <span>style</span>
+        <select id="box-style-select"></select>
+      </label>
       <div class="inspector-footer" id="inspector-footer">
         <button id="box-delete" class="btn danger">delete</button>
       </div>
@@ -491,7 +531,9 @@ function bootDiagrammer(): void {
   stylesError = document.querySelector<HTMLDivElement>("#styles-error")!;
   stylesCount = document.querySelector<HTMLSpanElement>("#styles-count")!;
   styleEditor = document.querySelector<HTMLElement>("#style-editor")!;
-  stylePackSelect = document.querySelector<HTMLSelectElement>("#style-pack-select")!;
+  canvasPackSelect = document.querySelector<HTMLSelectElement>("#canvas-pack-select")!;
+  objectPackSelect = document.querySelector<HTMLSelectElement>("#object-pack-select")!;
+  boxStyleSelect = document.querySelector<HTMLSelectElement>("#box-style-select")!;
   pageOverlay = document.querySelector<HTMLDivElement>("#page-overlay")!;
   pageBody = document.querySelector<HTMLDivElement>("#page-overlay-body")!;
   pageTitle = document.querySelector<HTMLElement>("#page-overlay-title")!;
@@ -512,8 +554,8 @@ function bootDiagrammer(): void {
   wireEvents();
   setMode(currentMode);
   render();
-  // Apply the bound style pack if the restored draft/hash carried one.
-  void applyStyleBinding(state.styleUri);
+  // Apply any style bindings the restored draft/hash carried.
+  void applyBindings();
 
   // Restore overlay page from URL (e.g. landing on #p=design-system).
   const initialPage = decodePageFromHash();
@@ -568,7 +610,7 @@ function setMode(m: Mode): void {
   }
   if (m === "gallery") refreshGallery();
   if (m === "styles") refreshStylesPane();
-  if (m === "draw") refreshStylePackPicker();
+  if (m === "draw") refreshDiagramPackPickers();
   // Leaving styles: discard any unsaved live-preview edits by closing the
   // editor, which re-applies the bound pack.
   if (prevMode === "styles" && m !== "styles") closeStyleEditor();
@@ -704,8 +746,10 @@ function wireEvents(): void {
 
   document.querySelector<HTMLButtonElement>("#styles-refresh")!
     .addEventListener("click", () => refreshStylesPane());
-  document.querySelector<HTMLButtonElement>("#styles-new")!
-    .addEventListener("click", newStylePack);
+  document.querySelector<HTMLButtonElement>("#styles-new-canvas")!
+    .addEventListener("click", () => newStylePack("canvas"));
+  document.querySelector<HTMLButtonElement>("#styles-new-object")!
+    .addEventListener("click", () => newStylePack("object"));
 
   stylesList.addEventListener("click", async (e) => {
     const li = (e.target as Element).closest("li.style-row[data-uri]") as HTMLLIElement | null;
@@ -727,11 +771,23 @@ function wireEvents(): void {
     }
   });
 
-  stylePackSelect.addEventListener("change", () => {
-    const val = stylePackSelect.value;
-    state.styleUri = val || null;
+  canvasPackSelect.addEventListener("change", () => {
+    state.canvasStyleUri = canvasPackSelect.value || null;
     saveDraft();
-    void applyStyleBinding(state.styleUri);
+    void applyBindings();
+  });
+  objectPackSelect.addEventListener("change", () => {
+    state.objectStyleUri = objectPackSelect.value || null;
+    saveDraft();
+    void applyBindings();
+  });
+  boxStyleSelect.addEventListener("change", async () => {
+    if (!selectedId) return;
+    const box = state.boxes.find((b) => b.id === selectedId);
+    if (!box) return;
+    box.styleUri = boxStyleSelect.value || null;
+    if (box.styleUri) await ensureObjectPackCached(box.styleUri);
+    render();
   });
 
   document.querySelector<HTMLButtonElement>("#save-diagram")!
@@ -864,10 +920,18 @@ function loadDiagramState(newState: Partial<DiagramState>): void {
   state.gradientTo = DEFAULT_GRADIENT_TO;
   state.boxes = [];
   state.connectors = [];
-  state.styleUri = null;
+  state.canvasStyleUri = null;
+  state.objectStyleUri = null;
   delete state.createdAt;
   delete state.updatedAt;
   Object.assign(state, newState);
+  // Legacy migration: a pre-split diagram with `styleUri` is treated as
+  // the default object pack. Drop the old field so the URL/hash stays clean.
+  const legacy = (state as unknown as { styleUri?: string | null }).styleUri;
+  if (typeof legacy === "string" && !state.objectStyleUri) {
+    state.objectStyleUri = legacy;
+  }
+  delete (state as unknown as { styleUri?: string | null }).styleUri;
   normalizeState();
   sceneInput.value = state.scene;
   bgSelect.value = state.background;
@@ -879,32 +943,95 @@ function loadDiagramState(newState: Partial<DiagramState>): void {
   selectedCenter = false;
   connectFrom = null;
   render();
-  void applyStyleBinding(state.styleUri);
+  void applyBindings();
 }
 
-// Live binding of a style pack: fetch the pack referenced by `uri`, merge
-// its tokens into `activeCanvasTokens` over the defaults, then re-render
-// the canvas. A null/missing pack resets to defaults. Failures are
-// non-fatal — the diagram renders with defaults.
-async function applyStyleBinding(uri: string | null | undefined): Promise<void> {
+// Apply the current diagram's style bindings: the canvas pack
+// (`state.canvasStyleUri`), the default object pack (`state.objectStyleUri`),
+// and any per-box object packs (`box.styleUri`). Packs are merged over the
+// built-in defaults so an incomplete pack still renders. Per-box packs are
+// cached so the synchronous renderer can resolve them without awaiting.
+async function applyBindings(): Promise<void> {
   activeCanvasTokens = { ...DEFAULT_CANVAS_TOKENS };
-  if (uri) {
-    try {
-      const rec = await styleStore.load(uri);
-      if (rec) {
-        const incoming = rec.pack.tokens || {};
-        for (const def of STYLE_TOKEN_DEFS) {
-          const v = incoming[def.name];
-          if (typeof v === "string" && v.length > 0) {
-            activeCanvasTokens[def.name] = v;
-          }
-        }
-      }
-    } catch (err) {
-      console.warn("[sideframer] style load failed", uri, err);
+  activeObjectTokens = { ...DEFAULT_OBJECT_TOKENS };
+  objectPackCache.clear();
+
+  const tasks: Promise<void>[] = [];
+
+  if (state.canvasStyleUri) {
+    tasks.push(loadAndMerge(state.canvasStyleUri, (pack) => {
+      mergeIntoCanvasTokens(pack, activeCanvasTokens);
+    }));
+  }
+  if (state.objectStyleUri) {
+    tasks.push(loadAndMerge(state.objectStyleUri, (pack) => {
+      mergeIntoObjectTokens(pack, activeObjectTokens);
+    }));
+  }
+  const uniqueBoxUris = new Set<string>();
+  for (const b of state.boxes) if (b.styleUri) uniqueBoxUris.add(b.styleUri);
+  for (const uri of uniqueBoxUris) {
+    tasks.push(loadAndMerge(uri, (pack) => {
+      const target: ObjectTokens = { ...DEFAULT_OBJECT_TOKENS };
+      mergeIntoObjectTokens(pack, target);
+      objectPackCache.set(uri, target);
+    }));
+  }
+
+  await Promise.all(tasks);
+  if (canvas) render();
+}
+
+async function loadAndMerge(uri: string, apply: (pack: StylePack) => void): Promise<void> {
+  try {
+    const rec = await styleStore.load(uri);
+    if (rec) apply(rec.pack);
+  } catch (err) {
+    console.warn("[sideframer] style load failed", uri, err);
+  }
+}
+
+function mergeIntoCanvasTokens(pack: StylePack, target: CanvasTokens): void {
+  for (const def of CANVAS_TOKEN_DEFS) {
+    const v = pack.tokens?.[def.name];
+    if (typeof v === "string" && v.length > 0) {
+      target[def.name] = v;
     }
   }
-  if (canvas) render();
+}
+
+function mergeIntoObjectTokens(pack: StylePack, target: ObjectTokens): void {
+  for (const def of OBJECT_TOKEN_DEFS) {
+    const v = pack.tokens?.[def.name];
+    if (typeof v === "string" && v.length > 0) {
+      target[def.name] = v;
+    }
+  }
+}
+
+// Resolve which object tokens to draw a box (or the center) with: the box's
+// own override if present and cached, otherwise the diagram default.
+function resolveObjectTokens(box: Box): ObjectTokens {
+  if (box.styleUri) {
+    const cached = objectPackCache.get(box.styleUri);
+    if (cached) return cached;
+  }
+  return activeObjectTokens;
+}
+
+// Eagerly load a single object pack into the cache (e.g., when an inspector
+// changes a box's styleUri) and re-render once available.
+async function ensureObjectPackCached(uri: string): Promise<void> {
+  if (objectPackCache.has(uri)) return;
+  try {
+    const rec = await styleStore.load(uri);
+    if (!rec) return;
+    const target: ObjectTokens = { ...DEFAULT_OBJECT_TOKENS };
+    mergeIntoObjectTokens(rec.pack, target);
+    objectPackCache.set(uri, target);
+  } catch (err) {
+    console.warn("[sideframer] box style load failed", uri, err);
+  }
 }
 
 // ---------------- Message bar ----------------
@@ -1003,14 +1130,17 @@ async function refreshGallery(): Promise<void> {
 
 // ---------------- Styles mode ----------------
 //
-// State for the styles pane. The currently-edited pack is held in memory so
-// per-token color inputs can mutate it without round-tripping through b3nd
-// — save only commits on explicit save. While the editor is open we live-
-// preview tokens by writing them to `:root`; leaving the mode (or hitting
-// cancel) re-applies the bound pack's tokens to discard the preview.
+// The styles pane lists every pack with its `kind` badge. A pack's apply
+// button binds it to the matching diagram-level slot (canvas or object
+// default); per-box object overrides happen through the inspector. The
+// editor's row layout adapts to `pack.kind` so users can't accidentally
+// fill an object pack with canvas-only tokens.
 
 let stylesToken = 0;
 let editedPack: StylePack | null = null;
+// Cached pack records so the box-style picker and list can show pack names
+// without re-fetching on each refresh. Filled by `refreshStylesPane`.
+let cachedPackList: { uri: string; slug: string; name: string; kind: StyleKind }[] = [];
 
 async function refreshStylesPane(): Promise<void> {
   if (!stylesError) return;
@@ -1028,19 +1158,29 @@ async function refreshStylesPane(): Promise<void> {
       ),
     );
     if (token !== stylesToken) return;
-    records.forEach((rec, i) => {
+    cachedPackList = [];
+    records.forEach((rec) => {
       if (!rec) return;
+      const kind: StyleKind = rec.pack.kind === "canvas" ? "canvas" : "object";
+      cachedPackList.push({ uri: rec.uri, slug: rec.slug, name: rec.name, kind });
       const li = document.createElement("li");
       li.className = "style-row";
       li.dataset.uri = rec.uri;
-      if (rec.uri === state.styleUri) li.classList.add("is-bound");
+      li.dataset.kind = kind;
+      const boundAs = describeBinding(rec.uri, kind);
+      if (boundAs) li.classList.add("is-bound");
       const tokens = rec.pack.tokens || {};
-      const swatches = Object.entries(tokens).slice(0, 8).map(([n, v]) =>
+      const colorEntries = Object.entries(tokens).filter(([, v]) => /^#[0-9a-fA-F]{6}$/.test(v));
+      const swatches = colorEntries.slice(0, 8).map(([n, v]) =>
         `<span class="style-swatch" style="background:${esc(v)}" title="${esc(n)}: ${esc(v)}"></span>`
       ).join("");
       li.innerHTML = `
         <div class="style-row-meta">
-          <span class="style-row-name">${esc(rec.name)}${rec.uri === state.styleUri ? ' <span class="style-row-bound">bound</span>' : ""}</span>
+          <span class="style-row-name">
+            ${esc(rec.name)}
+            <span class="style-row-kind kind-${kind}">${kind}</span>
+            ${boundAs ? `<span class="style-row-bound">${esc(boundAs)}</span>` : ""}
+          </span>
           <span class="style-row-uri">${esc(rec.uri)}</span>
         </div>
         <div class="style-row-swatches">${swatches}</div>
@@ -1048,9 +1188,10 @@ async function refreshStylesPane(): Promise<void> {
           <button class="btn-mini" type="button" data-action="apply" title="bind to current diagram">↻ apply</button>
           <button class="btn-mini" type="button" data-action="edit">edit</button>
         </div>`;
-      void i;
       stylesList.appendChild(li);
     });
+    refreshDiagramPackPickers();
+    refreshBoxStylePicker();
   } catch (e) {
     if (token !== stylesToken) return;
     stylesError.hidden = false;
@@ -1063,19 +1204,29 @@ async function refreshStylesPane(): Promise<void> {
   }
 }
 
+// "bound (canvas)" / "bound (default)" / "bound (per-box)" or null.
+function describeBinding(uri: string, kind: StyleKind): string | null {
+  if (kind === "canvas" && state.canvasStyleUri === uri) return "bound · canvas";
+  if (kind === "object" && state.objectStyleUri === uri) return "bound · default object";
+  if (kind === "object" && state.boxes.some((b) => b.styleUri === uri)) return "bound · per-box";
+  return null;
+}
+
 function openStyleEditor(_uri: string | null, pack: StylePack): void {
+  const kind: StyleKind = pack.kind === "canvas" ? "canvas" : "object";
   // Deep-clone so live edits don't leak into the list's loaded record.
-  editedPack = { name: pack.name, tokens: { ...(pack.tokens || {}) } };
-  // Seed the live preview with the pack's tokens so the canvas matches the
-  // editor immediately on open.
-  applyTokensToCanvas(editedPack.tokens || {});
+  editedPack = { name: pack.name, kind, tokens: { ...(pack.tokens || {}) } };
+  // Seed the live preview so the canvas matches the editor on open.
+  primeActiveTokensFor(editedPack);
   styleEditor.hidden = false;
+  const defs = tokenDefsFor(kind);
   styleEditor.innerHTML = `
     <header class="style-editor-header">
       <label class="field">
         <span>pack name</span>
         <input id="style-name-input" type="text" value="${esc(editedPack.name)}"/>
       </label>
+      <span class="style-editor-kind kind-${kind}">${kind} pack</span>
       <div class="style-editor-actions">
         <button class="btn" type="button" id="style-save">save</button>
         <button class="btn" type="button" id="style-save-apply">save &amp; apply</button>
@@ -1083,9 +1234,9 @@ function openStyleEditor(_uri: string | null, pack: StylePack): void {
       </div>
     </header>
     <div class="style-token-grid">
-      ${STYLE_TOKEN_DEFS.map((t) => {
+      ${defs.map((t) => {
         const v = editedPack!.tokens?.[t.name] ?? t.default;
-        if (t.kind === "font") {
+        if (t.control === "font") {
           const opts = FONT_FAMILY_OPTIONS.map((o) =>
             `<option value="${esc(o.value)}"${o.value === v ? " selected" : ""}>${esc(o.label)}</option>`
           ).join("");
@@ -1098,23 +1249,37 @@ function openStyleEditor(_uri: string | null, pack: StylePack): void {
         return `
           <label class="field field-color style-token-row">
             <span>${esc(t.label)}<br><code>${esc(t.name)}</code></span>
-            <input type="color" data-token="${esc(t.name)}" value="${esc(v)}"/>
+            <span class="color-pair">
+              <input type="color" data-token="${esc(t.name)}" data-control="color" value="${esc(v)}"/>
+              <input type="text" class="hex-text" data-token="${esc(t.name)}" data-control="hex"
+                     value="${esc(v)}" maxlength="7" spellcheck="false"
+                     autocapitalize="off" autocomplete="off"/>
+            </span>
           </label>`;
       }).join("")}
     </div>`;
-  // Wire live preview: every change updates the working pack + the canvas.
+  // Wire live preview. Color & hex inputs are paired and bidirectionally
+  // synced; the font select fires `change` rather than `input`.
   styleEditor.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-token]").forEach((inp) => {
-    const handler = () => {
-      const name = (inp.dataset.token as keyof CanvasTokens);
-      if (editedPack) {
-        if (!editedPack.tokens) editedPack.tokens = {};
-        editedPack.tokens[name] = inp.value;
+    inp.addEventListener(inp.tagName === "SELECT" ? "change" : "input", () => {
+      const name = inp.dataset.token!;
+      const ctrl = inp.dataset.control;
+      let value = inp.value;
+      if (ctrl === "hex") {
+        if (!/^#[0-9a-fA-F]{6}$/.test(value)) return;        // wait for valid hex
+        value = value.toLowerCase();
+        const partner = styleEditor.querySelector<HTMLInputElement>(
+          `input[data-token="${name}"][data-control="color"]`,
+        );
+        if (partner) partner.value = value;
+      } else if (ctrl === "color") {
+        const partner = styleEditor.querySelector<HTMLInputElement>(
+          `input[data-token="${name}"][data-control="hex"]`,
+        );
+        if (partner) partner.value = value;
       }
-      activeCanvasTokens = { ...activeCanvasTokens, [name]: inp.value };
-      if (canvas) render();
-    };
-    // <input type="color"> fires "input"; <select> fires "change".
-    inp.addEventListener(inp.tagName === "SELECT" ? "change" : "input", handler);
+      writeEditedToken(name, value);
+    });
   });
   const nameInput = styleEditor.querySelector<HTMLInputElement>("#style-name-input")!;
   nameInput.addEventListener("input", () => {
@@ -1128,16 +1293,35 @@ function openStyleEditor(_uri: string | null, pack: StylePack): void {
     .addEventListener("click", () => saveStyleEdit(true));
 }
 
-// Merge a (partial) pack token map over defaults into `activeCanvasTokens`
-// and re-render. Used by `openStyleEditor` to prime the live preview; the
-// per-input handlers handle subsequent edits in place.
-function applyTokensToCanvas(tokens: Record<string, string>): void {
-  activeCanvasTokens = { ...DEFAULT_CANVAS_TOKENS };
-  for (const def of STYLE_TOKEN_DEFS) {
-    const v = tokens[def.name];
-    if (typeof v === "string" && v.length > 0) {
-      activeCanvasTokens[def.name] = v;
+// Update the working pack and the matching active token set so the canvas
+// reflects the edit immediately. Per-box overrides aren't touched — the
+// editor previews against the diagram default, not specific overrides.
+function writeEditedToken(name: string, value: string): void {
+  if (!editedPack) return;
+  if (!editedPack.tokens) editedPack.tokens = {};
+  editedPack.tokens[name] = value;
+  if (editedPack.kind === "canvas") {
+    if ((CANVAS_TOKEN_DEFS as { name: string }[]).some((d) => d.name === name)) {
+      (activeCanvasTokens as unknown as Record<string, string>)[name] = value;
     }
+  } else {
+    if ((OBJECT_TOKEN_DEFS as { name: string }[]).some((d) => d.name === name)) {
+      (activeObjectTokens as unknown as Record<string, string>)[name] = value;
+    }
+  }
+  if (canvas) render();
+}
+
+// Reset the relevant active tokens to defaults then apply the working pack
+// over them. Used when opening the editor so the canvas matches the inputs
+// even if no token has changed yet.
+function primeActiveTokensFor(pack: StylePack): void {
+  if (pack.kind === "canvas") {
+    activeCanvasTokens = { ...DEFAULT_CANVAS_TOKENS };
+    mergeIntoCanvasTokens(pack, activeCanvasTokens);
+  } else {
+    activeObjectTokens = { ...DEFAULT_OBJECT_TOKENS };
+    mergeIntoObjectTokens(pack, activeObjectTokens);
   }
   if (canvas) render();
 }
@@ -1146,7 +1330,8 @@ function closeStyleEditor(): void {
   styleEditor.hidden = true;
   styleEditor.innerHTML = "";
   editedPack = null;
-  void applyStyleBinding(state.styleUri);
+  // Revert the live preview by re-resolving every binding from state.
+  void applyBindings();
 }
 
 async function saveStyleEdit(alsoApply: boolean): Promise<void> {
@@ -1157,11 +1342,13 @@ async function saveStyleEdit(alsoApply: boolean): Promise<void> {
   try {
     const rec = await styleStore.save(editedPack);
     showMessage(`saved · ${rec.slug}`, "ok");
-    if (alsoApply || state.styleUri === rec.uri) {
-      state.styleUri = rec.uri;
+    const matchingSlot = rec.pack.kind === "canvas" ? "canvasStyleUri" : "objectStyleUri";
+    if (alsoApply) {
+      state[matchingSlot] = rec.uri;
       saveDraft();
-      await applyStyleBinding(rec.uri);
-      refreshStylePackPicker();
+    }
+    if (state[matchingSlot] === rec.uri) {
+      await applyBindings();
     }
     refreshStylesPane();
   } catch (err) {
@@ -1172,41 +1359,102 @@ async function saveStyleEdit(alsoApply: boolean): Promise<void> {
   }
 }
 
-function newStylePack(): void {
+function newStylePack(kind: StyleKind): void {
+  const defs = tokenDefsFor(kind);
   const blank: StylePack = {
-    name: "new pack",
-    tokens: Object.fromEntries(STYLE_TOKEN_DEFS.map((t) => [t.name, t.default])),
+    name: `new ${kind} pack`,
+    kind,
+    tokens: Object.fromEntries(defs.map((d) => [d.name, d.default])),
   };
   openStyleEditor(null, blank);
 }
 
+// Apply a pack to the matching diagram-level slot (canvas or object
+// default). Per-box overrides go through the inspector instead.
 async function applyPackToDiagram(uri: string): Promise<void> {
-  state.styleUri = uri;
-  saveDraft();
-  await applyStyleBinding(uri);
-  refreshStylePackPicker();
-  refreshStylesPane();
-  showMessage(`bound · ${styleNs.slugFromUri(uri)}`, "ok");
+  const pack = cachedPackList.find((p) => p.uri === uri);
+  if (!pack) {
+    // Fall back to loading the pack to discover its kind.
+    try {
+      const rec = await styleStore.load(uri);
+      if (!rec) { showMessage("pack not found", "warn"); return; }
+      applyByKind(rec.pack.kind === "canvas" ? "canvas" : "object", uri);
+    } catch (err) {
+      console.warn("apply failed", err);
+      showMessage("couldn't load pack", "warn");
+    }
+    return;
+  }
+  applyByKind(pack.kind, uri);
 }
 
-async function refreshStylePackPicker(): Promise<void> {
-  if (!stylePackSelect) return;
-  try {
-    const items = await styleStore.list();
-    const opts = [`<option value="">(none)</option>`];
-    const known = new Set<string>(items.map((i) => i.uri));
-    for (const { uri, slug } of items) {
-      opts.push(`<option value="${esc(uri)}">${esc(slug)}</option>`);
+function applyByKind(kind: StyleKind, uri: string): void {
+  if (kind === "canvas") state.canvasStyleUri = uri;
+  else state.objectStyleUri = uri;
+  saveDraft();
+  void applyBindings();
+  refreshStylesPane();
+  showMessage(`bound · ${styleNs.slugFromUri(uri)} (${kind})`, "ok");
+}
+
+async function refreshDiagramPackPickers(): Promise<void> {
+  if (!canvasPackSelect || !objectPackSelect) return;
+  // Prefer cache if populated; otherwise fetch the list once.
+  let packs = cachedPackList;
+  if (packs.length === 0) {
+    try {
+      const items = await styleStore.list();
+      const records = await Promise.all(items.map(({ uri }) =>
+        styleStore.load(uri).catch(() => null as null)
+      ));
+      packs = records.filter((r): r is NonNullable<typeof r> => r != null).map((r) => ({
+        uri: r.uri, slug: r.slug, name: r.name,
+        kind: (r.pack.kind === "canvas" ? "canvas" : "object") as StyleKind,
+      }));
+      cachedPackList = packs;
+    } catch (err) {
+      console.warn("refresh pack pickers failed", err);
+      canvasPackSelect.innerHTML = `<option value="">(unable to load)</option>`;
+      objectPackSelect.innerHTML = `<option value="">(unable to load)</option>`;
+      return;
     }
-    if (state.styleUri && !known.has(state.styleUri)) {
-      opts.push(`<option value="${esc(state.styleUri)}">(unknown · ${esc(styleNs.slugFromUri(state.styleUri))})</option>`);
-    }
-    stylePackSelect.innerHTML = opts.join("");
-    stylePackSelect.value = state.styleUri || "";
-  } catch (err) {
-    console.warn("refresh style pack picker failed", err);
-    stylePackSelect.innerHTML = `<option value="">(unable to load packs)</option>`;
   }
+  populatePackSelect(canvasPackSelect, packs.filter((p) => p.kind === "canvas"), state.canvasStyleUri);
+  populatePackSelect(objectPackSelect, packs.filter((p) => p.kind === "object"), state.objectStyleUri);
+  refreshBoxStylePicker();
+}
+
+function populatePackSelect(
+  sel: HTMLSelectElement,
+  packs: { uri: string; slug: string; name: string }[],
+  bound: string | null | undefined,
+): void {
+  const opts = [`<option value="">(none)</option>`];
+  const known = new Set<string>(packs.map((p) => p.uri));
+  for (const { uri, name } of packs) {
+    opts.push(`<option value="${esc(uri)}">${esc(name)}</option>`);
+  }
+  if (bound && !known.has(bound)) {
+    opts.push(`<option value="${esc(bound)}">(unknown · ${esc(styleNs.slugFromUri(bound))})</option>`);
+  }
+  sel.innerHTML = opts.join("");
+  sel.value = bound || "";
+}
+
+// Inspector picker — shows object packs plus "(diagram default)".
+function refreshBoxStylePicker(): void {
+  if (!boxStyleSelect) return;
+  const box = selectedId ? state.boxes.find((b) => b.id === selectedId) : null;
+  const objectPacks = cachedPackList.filter((p) => p.kind === "object");
+  const opts = [`<option value="">(diagram default)</option>`];
+  const known = new Set<string>(objectPacks.map((p) => p.uri));
+  for (const p of objectPacks) opts.push(`<option value="${esc(p.uri)}">${esc(p.name)}</option>`);
+  const current = box?.styleUri || "";
+  if (current && !known.has(current)) {
+    opts.push(`<option value="${esc(current)}">(unknown · ${esc(styleNs.slugFromUri(current))})</option>`);
+  }
+  boxStyleSelect.innerHTML = opts.join("");
+  boxStyleSelect.value = current;
 }
 
 function buildPreviewSVG(d: Partial<DiagramState>): string {
@@ -1331,27 +1579,26 @@ function render(): void {
 }
 
 function buildSVG(): string {
-  const T = activeCanvasTokens;
+  const C = activeCanvasTokens;
+  // The center uses the diagram's default object pack, never a per-box
+  // override (the centerpiece isn't a Box).
+  const centerObj = activeObjectTokens;
   const sceneStr = state.scene ? `scene:  ${esc(state.scene)}` : "";
   const centerConnectSource = currentMode === "connect" && connectFrom === CENTER_ID;
   const centerSel = selectedCenter;
-  const centerStroke = centerSel ? "#3b82f6" : centerConnectSource ? "#10b981" : T.centerStroke;
+  const centerStroke = centerSel ? "#3b82f6" : centerConnectSource ? "#10b981" : centerObj.stroke;
   const centerSw = centerSel ? 3 : 2.5;
   const centerDashed = centerConnectSource;
-  const ff = esc(T.fontFamily);
+  const ff = esc(C.fontFamily);
   return `
 <svg id="svg-root" class="mode-${currentMode}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}" width="${CANVAS_W}" height="${CANVAS_H}">
   <style>
-    .axis { font: 600 12px ${ff}; letter-spacing: 4px; fill: ${T.muteInk}; }
-    .scene-line { font: 13px ${ff}; fill: ${T.muteInk}; letter-spacing: 0.5px; }
-    .center-label { font: 600 22px ${ff}; fill: ${T.ink}; }
-    .center-sublabel { font: 14px ${ff}; fill: ${T.muteInk}; }
-    .box-label { font: 600 14px ${ff}; fill: ${T.ink}; }
-    .box-sublabel { font: 12px ${ff}; fill: ${T.muteInk}; }
+    .axis { font: 600 12px ${ff}; letter-spacing: 4px; fill: ${C.axisInk}; }
+    .scene-line { font: 13px ${ff}; fill: ${C.axisInk}; letter-spacing: 0.5px; }
   </style>
   <defs>
     <marker id="arrow" viewBox="-10 -5 10 10" refX="0" refY="0" markerWidth="10" markerHeight="10" orient="auto">
-      <path d="M-10,-5 L0,0 L-10,5 Z" fill="${T.arrowFill}"/>
+      <path d="M-10,-5 L0,0 L-10,5 Z" fill="${centerObj.arrowFill}"/>
     </marker>
     <marker id="arrow-sel" viewBox="-10 -5 10 10" refX="0" refY="0" markerWidth="10" markerHeight="10" orient="auto">
       <path d="M-10,-5 L0,0 L-10,5 Z" fill="#3b82f6"/>
@@ -1379,14 +1626,16 @@ function buildSVG(): string {
     ${renderShape(
       { id: CENTER_ID, label: "", sublabel: "", shape: CENTER_SHAPE,
         x: state.centerX, y: state.centerY, w: CENTER_W, h: CENTER_H },
-      T.centerFill, centerStroke, centerSw, centerDashed,
+      centerObj.fill, centerStroke, centerSw, centerDashed,
     )}
-    <text class="center-label" x="${state.centerX + CENTER_W / 2}"
+    <text x="${state.centerX + CENTER_W / 2}"
           y="${state.centerY + CENTER_H / 2 - (state.centerSublabel ? 10 : 0)}"
-          text-anchor="middle" dominant-baseline="middle">${esc(state.centerLabel)}</text>
+          text-anchor="middle" dominant-baseline="middle"
+          style="font: 600 22px ${ff}; fill: ${centerObj.ink};">${esc(state.centerLabel)}</text>
     ${state.centerSublabel
-      ? `<text class="center-sublabel" x="${state.centerX + CENTER_W / 2}" y="${state.centerY + CENTER_H / 2 + 18}"
-            text-anchor="middle" dominant-baseline="middle">${esc(state.centerSublabel)}</text>`
+      ? `<text x="${state.centerX + CENTER_W / 2}" y="${state.centerY + CENTER_H / 2 + 18}"
+            text-anchor="middle" dominant-baseline="middle"
+            style="font: 14px ${ff}; fill: ${centerObj.muteInk};">${esc(state.centerSublabel)}</text>`
       : ""}
   </g>
 
@@ -1395,7 +1644,7 @@ function buildSVG(): string {
 }
 
 function renderBackground(): string {
-  const T = activeCanvasTokens;
+  const T = { bg: activeCanvasTokens.bg };
   switch (state.background) {
     case "clean":
       return `<rect width="100%" height="100%" fill="${T.bg}"/>`;
@@ -1446,10 +1695,11 @@ function renderBackground(): string {
 }
 
 function renderBox(b: Box): string {
-  const T = activeCanvasTokens;
+  const T = resolveObjectTokens(b);
+  const ff = esc(activeCanvasTokens.fontFamily);
   const sel = b.id === selectedId;
   const isConnectSource = currentMode === "connect" && connectFrom === b.id;
-  const stroke = sel ? "#3b82f6" : isConnectSource ? "#10b981" : T.boxStroke;
+  const stroke = sel ? "#3b82f6" : isConnectSource ? "#10b981" : T.stroke;
   const sw = sel ? 2.5 : 1.5;
   const labelBelow = b.shape === "user";
   const labelY = labelBelow
@@ -1457,13 +1707,14 @@ function renderBox(b: Box): string {
     : b.y + b.h / 2 - (b.sublabel ? 8 : 0);
   const sublabelY = labelBelow ? b.y + b.h - 4 : b.y + b.h / 2 + 12;
   return `<g class="box" data-id="${b.id}">
-    ${renderShape(b, T.boxFill, stroke, sw, isConnectSource)}
-    <text class="box-label" x="${b.x + b.w / 2}"
-          y="${labelY}"
-          text-anchor="middle" dominant-baseline="middle">${esc(b.label)}</text>
+    ${renderShape(b, T.fill, stroke, sw, isConnectSource)}
+    <text x="${b.x + b.w / 2}" y="${labelY}"
+          text-anchor="middle" dominant-baseline="middle"
+          style="font: 600 14px ${ff}; fill: ${T.ink};">${esc(b.label)}</text>
     ${b.sublabel
-      ? `<text class="box-sublabel" x="${b.x + b.w / 2}" y="${sublabelY}"
-            text-anchor="middle" dominant-baseline="middle">${esc(b.sublabel)}</text>`
+      ? `<text x="${b.x + b.w / 2}" y="${sublabelY}"
+            text-anchor="middle" dominant-baseline="middle"
+            style="font: 12px ${ff}; fill: ${T.muteInk};">${esc(b.sublabel)}</text>`
       : ""}
   </g>`;
 }
@@ -1527,8 +1778,8 @@ function shapeIconSvg(shape: Shape): string {
     id: "icon", label: "", sublabel: "", shape,
     x: 5, y: 5, w: 42, h: 22,
   };
-  const T = activeCanvasTokens;
-  return `<svg viewBox="0 0 52 32" width="52" height="32">${renderShape(iconBox, T.boxFill, T.boxStroke, 1.2)}</svg>`;
+  const T = activeObjectTokens;
+  return `<svg viewBox="0 0 52 32" width="52" height="32">${renderShape(iconBox, T.fill, T.stroke, 1.2)}</svg>`;
 }
 
 function renderConnector(c: Connector): string {
@@ -1542,7 +1793,7 @@ function renderConnector(c: Connector): string {
   const start = rectBoundary(from, toCx, toCy);
   const end = rectBoundary(to, fromCx, fromCy);
   const sel = c.id === selectedConnectorId;
-  const stroke = sel ? "#3b82f6" : activeCanvasTokens.connectorStroke;
+  const stroke = sel ? "#3b82f6" : activeObjectTokens.connectorStroke;
   const sw = sel ? 2 : 1.5;
   const marker = sel ? "arrow-sel" : "arrow";
   return `<g class="connector" data-id="${c.id}">
@@ -1738,10 +1989,12 @@ function syncInspector(): void {
     inspector.hidden = true;
     return;
   }
+  const boxStyleField = document.querySelector<HTMLElement>("#box-style-field");
   if (selectedCenter) {
     inspector.hidden = false;
     shapeField.hidden = true;
     inspectorFooter.hidden = true;
+    if (boxStyleField) boxStyleField.hidden = true;
     if (document.activeElement !== boxLabelInput) boxLabelInput.value = state.centerLabel;
     if (document.activeElement !== boxSublabelInput) boxSublabelInput.value = state.centerSublabel;
     positionInspector();
@@ -1759,12 +2012,17 @@ function syncInspector(): void {
   inspector.hidden = false;
   shapeField.hidden = false;
   inspectorFooter.hidden = false;
+  if (boxStyleField) boxStyleField.hidden = false;
   if (document.activeElement !== boxLabelInput) boxLabelInput.value = box.label;
   if (document.activeElement !== boxSublabelInput) boxSublabelInput.value = box.sublabel;
   shapeGrid.querySelectorAll("button[data-shape]").forEach((b) => {
     const btn = b as HTMLButtonElement;
     btn.classList.toggle("active", btn.dataset.shape === box.shape);
   });
+  // Populate the per-box style picker from the cached pack list. If the
+  // cache is empty (haven't entered draw/styles yet), trigger a fetch.
+  refreshBoxStylePicker();
+  if (cachedPackList.length === 0) void refreshDiagramPackPickers();
   positionInspector();
 }
 
@@ -1851,13 +2109,14 @@ function newDiagram(): void {
   state.centerY = CENTER_Y_DEFAULT;
   state.boxes = [];
   state.connectors = [];
-  state.styleUri = null;
+  state.canvasStyleUri = null;
+  state.objectStyleUri = null;
   selectedId = null;
   selectedConnectorId = null;
   selectedCenter = false;
   connectFrom = null;
   sceneInput.value = state.scene;
-  void applyStyleBinding(null);
+  void applyBindings();
   setMode("draw");
 }
 
