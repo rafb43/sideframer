@@ -2,17 +2,29 @@ import { connection, Rig } from "@bandeira-tech/b3nd-core/rig";
 import { HttpClient } from "@bandeira-tech/b3nd-move/http/client";
 import { type Namespace, sluggify } from "./sluggify.ts";
 
-export interface DiagramRecord {
+// A style pack is a small JSON payload that overrides the default visual
+// tokens of the diagram shell. Diagrams reference one by URI (`styleUri`);
+// the binding is live — updating the pack updates every diagram that points
+// at it. Snapshots happen only on PNG export.
+
+export interface StylePack {
+  name: string;
+  tokens: Record<string, string>;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface StylePackRecord {
   uri: string;
   slug: string;
-  scene: string;
-  diagram: unknown;
+  name: string;
+  pack: StylePack;
 }
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-export function createClientRig(serverUrl: string, ns: Namespace): Rig {
+export function createStyleRig(serverUrl: string, ns: Namespace): Rig {
   const client = new HttpClient({ url: serverUrl });
   return new Rig({
     routes: {
@@ -50,7 +62,7 @@ async function bytesToJson(payload: unknown): Promise<unknown> {
   return payload;
 }
 
-export class DiagramStore {
+export class StyleStore {
   private rig: Rig;
   private ns: Namespace;
   constructor(rig: Rig, ns: Namespace) {
@@ -58,11 +70,11 @@ export class DiagramStore {
     this.ns = ns;
   }
 
-  async save(diagram: { scene?: string }): Promise<DiagramRecord> {
-    const scene = diagram.scene || "untitled";
-    const slug = sluggify(scene);
+  async save(pack: StylePack): Promise<StylePackRecord> {
+    const name = pack.name || "untitled";
+    const slug = sluggify(name);
     const uri = this.ns.uriFor(slug);
-    const bytes = toBytes(diagram);
+    const bytes = toBytes({ ...pack, name });
     // `rig.receive` returns on pipeline-ack — the HTTP POST fires in the
     // background. Await `settled` so subsequent reads see the new state.
     const op = this.rig.receive([[uri, bytes]]);
@@ -72,16 +84,15 @@ export class DiagramStore {
     if (!result || (typeof result === "object" && "accepted" in result && !result.accepted)) {
       throw new Error(`save rejected: ${JSON.stringify(result)}`);
     }
-    return { uri, slug, scene, diagram };
+    return { uri, slug, name, pack: { ...pack, name } };
   }
 
-  async load(uri: string): Promise<DiagramRecord | null> {
+  async load(uri: string): Promise<StylePackRecord | null> {
     const [out] = await this.rig.read([uri]);
     if (!out || out[1] == null) return null;
-    const diagram = await bytesToJson(out[1]);
+    const pack = (await bytesToJson(out[1])) as StylePack;
     const slug = this.ns.slugFromUri(uri);
-    const scene = (diagram as { scene?: string })?.scene || slug;
-    return { uri, slug, scene, diagram };
+    return { uri, slug, name: pack?.name || slug, pack };
   }
 
   async list(): Promise<{ uri: string; slug: string }[]> {

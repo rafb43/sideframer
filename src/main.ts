@@ -1,11 +1,21 @@
 import "./style.css";
 import { createClientRig, DiagramStore } from "./lib/diagram-store.ts";
+import { createStyleRig, StyleStore } from "./lib/style-store.ts";
+import { createNamespace } from "./lib/sluggify.ts";
 // design-system and help pages are dynamic-imported on demand (see setPage)
 // to keep the diagrammer bundle light.
 
 const STORAGE_SERVER = (import.meta as { env?: { VITE_SIDEFRAMER_SERVER?: string } }).env
   ?.VITE_SIDEFRAMER_SERVER || "http://localhost:5174";
-const diagramStore = new DiagramStore(createClientRig(STORAGE_SERVER));
+
+// Each b3nd app is mounted at an injected dataspace URI. Swap the providers
+// to point either app at a different scheme, prefix, or node — no code
+// changes needed downstream.
+const diagramNs = createNamespace(() => "mutable://diagrams");
+const styleNs = createNamespace(() => "mutable://styles");
+
+const diagramStore = new DiagramStore(createClientRig(STORAGE_SERVER, diagramNs), diagramNs);
+const styleStore = new StyleStore(createStyleRig(STORAGE_SERVER, styleNs), styleNs);
 
 // ---------------- Types ----------------
 
@@ -57,6 +67,13 @@ interface DiagramState {
   gradientTo: string;
   boxes: Box[];
   connectors: Connector[];
+  /**
+   * Live reference to a style pack URI. The diagram does not carry tokens of
+   * its own — the pack is fetched and applied at load time, so updates to the
+   * pack flow through to every diagram pointing at it. Use PNG export when a
+   * frozen snapshot is needed.
+   */
+  styleUri?: string | null;
   createdAt?: number;
   updatedAt?: number;
 }
@@ -715,6 +732,7 @@ function loadDiagramState(newState: Partial<DiagramState>): void {
   state.gradientTo = DEFAULT_GRADIENT_TO;
   state.boxes = [];
   state.connectors = [];
+  state.styleUri = null;
   delete state.createdAt;
   delete state.updatedAt;
   Object.assign(state, newState);
@@ -729,6 +747,30 @@ function loadDiagramState(newState: Partial<DiagramState>): void {
   selectedCenter = false;
   connectFrom = null;
   render();
+  void applyStyleBinding(state.styleUri);
+}
+
+// Live binding of a style pack: fetch the pack referenced by `uri` and write
+// its tokens onto `:root` as CSS variables. Previous overrides are cleared
+// first so a load doesn't inherit the prior diagram's pack. Failures are
+// non-fatal — the diagram renders with default tokens.
+let appliedTokenNames: string[] = [];
+
+async function applyStyleBinding(uri: string | null | undefined): Promise<void> {
+  const root = document.documentElement.style;
+  for (const name of appliedTokenNames) root.removeProperty(name);
+  appliedTokenNames = [];
+  if (!uri) return;
+  try {
+    const rec = await styleStore.load(uri);
+    if (!rec) return;
+    for (const [name, value] of Object.entries(rec.pack.tokens || {})) {
+      root.setProperty(name, value);
+      appliedTokenNames.push(name);
+    }
+  } catch (err) {
+    console.warn("[sideframer] style load failed", uri, err);
+  }
 }
 
 // ---------------- Message bar ----------------
@@ -1462,11 +1504,13 @@ function newDiagram(): void {
   state.centerY = CENTER_Y_DEFAULT;
   state.boxes = [];
   state.connectors = [];
+  state.styleUri = null;
   selectedId = null;
   selectedConnectorId = null;
   selectedCenter = false;
   connectFrom = null;
   sceneInput.value = state.scene;
+  void applyStyleBinding(null);
   setMode("draw");
 }
 
