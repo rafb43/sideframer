@@ -234,7 +234,6 @@ let stylesList!: HTMLUListElement;
 let stylesEmpty!: HTMLDivElement;
 let stylesError!: HTMLDivElement;
 let stylesCount!: HTMLSpanElement;
-let styleEditor!: HTMLElement;
 let canvasPackSelect!: HTMLSelectElement;
 let objectPackSelect!: HTMLSelectElement;
 let boxStyleSelect!: HTMLSelectElement;
@@ -430,7 +429,6 @@ function bootDiagrammer(): void {
               no packs yet — click <kbd>+ new pack</kbd> to create one.
             </div>
             <div class="styles-error" id="styles-error" hidden></div>
-            <section class="style-editor" id="style-editor" hidden></section>
           </aside>
           <div id="canvas-pane">
             <div id="canvas"></div>
@@ -501,7 +499,6 @@ function bootDiagrammer(): void {
   stylesEmpty = document.querySelector<HTMLDivElement>("#styles-empty")!;
   stylesError = document.querySelector<HTMLDivElement>("#styles-error")!;
   stylesCount = document.querySelector<HTMLSpanElement>("#styles-count")!;
-  styleEditor = document.querySelector<HTMLElement>("#style-editor")!;
   canvasPackSelect = document.querySelector<HTMLSelectElement>("#canvas-pack-select")!;
   objectPackSelect = document.querySelector<HTMLSelectElement>("#object-pack-select")!;
   boxStyleSelect = document.querySelector<HTMLSelectElement>("#box-style-select")!;
@@ -705,24 +702,14 @@ function wireEvents(): void {
   document.querySelector<HTMLButtonElement>("#styles-new-object")!
     .addEventListener("click", () => newStylePack("object"));
 
-  stylesList.addEventListener("click", async (e) => {
-    const li = (e.target as Element).closest("li.style-row[data-uri]") as HTMLLIElement | null;
-    if (!li || !li.dataset.uri) return;
-    const action = ((e.target as Element)
-      .closest("button[data-action]") as HTMLButtonElement | null)?.dataset.action;
-    const uri = li.dataset.uri;
-    if (action === "apply") {
-      await applyPackToDiagram(uri);
-      return;
-    }
-    try {
-      const rec = await styleStore.load(uri);
-      if (!rec) { showMessage("pack not found", "warn"); return; }
-      openStyleEditor(uri, rec.pack);
-    } catch (err) {
-      console.warn("load pack failed", err);
-      showMessage("couldn't load pack", "warn");
-    }
+  stylesList.addEventListener("click", (e) => {
+    // Clicks inside the editor area (inputs, buttons) shouldn't toggle the row.
+    if ((e.target as Element).closest(".style-row-editor")) return;
+    const li = (e.target as Element).closest("li.style-row") as HTMLLIElement | null;
+    if (!li) return;
+    const uri = li.dataset.uri || "";
+    if (!uri) return;        // unsaved new row — already open
+    void openPackInRow(uri);
   });
 
   canvasPackSelect.addEventListener("change", () => {
@@ -1085,6 +1072,10 @@ async function refreshGallery(): Promise<void> {
 
 let stylesToken = 0;
 let editedPack: StylePack | null = null;
+// URI of the pack whose row is expanded for editing. Null = no row open or
+// the open row is for a not-yet-saved new pack (tracked via `editingNewKind`).
+let activePackUri: string | null = null;
+let editingNewKind: StyleKind | null = null;
 // Cached pack records so the box-style picker and list can show pack names
 // without re-fetching on each refresh. Filled by `refreshStylesPane`.
 let cachedPackList: { uri: string; slug: string; name: string; kind: StyleKind }[] = [];
@@ -1106,39 +1097,37 @@ async function refreshStylesPane(): Promise<void> {
     );
     if (token !== stylesToken) return;
     cachedPackList = [];
+    // A not-yet-saved new pack appears at the top with the editor already
+    // open. Its URI is empty until the first save.
+    if (editingNewKind && editedPack) {
+      stylesList.appendChild(buildRowLi({
+        uri: "",
+        kind: editingNewKind,
+        name: editedPack.name,
+        tokens: editedPack.tokens || {},
+        bound: null,
+        isOpen: true,
+        isNew: true,
+      }));
+    }
     records.forEach((rec) => {
       if (!rec) return;
       const kind: StyleKind = rec.pack.kind === "canvas" ? "canvas" : "object";
       cachedPackList.push({ uri: rec.uri, slug: rec.slug, name: rec.name, kind });
-      const li = document.createElement("li");
-      li.className = "style-row";
-      li.dataset.uri = rec.uri;
-      li.dataset.kind = kind;
-      const boundAs = describeBinding(rec.uri, kind);
-      if (boundAs) li.classList.add("is-bound");
-      const tokens = rec.pack.tokens || {};
-      const colorEntries = Object.entries(tokens).filter(([, v]) => /^#[0-9a-fA-F]{6}$/.test(v));
-      const swatches = colorEntries.slice(0, 8).map(([n, v]) =>
-        `<span class="style-swatch" style="background:${esc(v)}" title="${esc(n)}: ${esc(v)}"></span>`
-      ).join("");
-      li.innerHTML = `
-        <div class="style-row-meta">
-          <div class="style-row-line1">
-            <span class="style-row-kind kind-${kind}">${kind}</span>
-            <span class="style-row-swatches">${swatches}</span>
-          </div>
-          <div class="style-row-name">
-            ${esc(rec.name)}
-            ${boundAs ? `<span class="style-row-bound">${esc(boundAs)}</span>` : ""}
-          </div>
-          <div class="style-row-uri">${esc(rec.uri)}</div>
-        </div>
-        <div class="style-row-actions">
-          <button class="btn-mini" type="button" data-action="apply" title="bind to current diagram">↻ apply</button>
-          <button class="btn-mini" type="button" data-action="edit">edit</button>
-        </div>`;
-      stylesList.appendChild(li);
+      const isOpen = activePackUri === rec.uri;
+      const sourceTokens = isOpen && editedPack ? editedPack.tokens || {} : rec.pack.tokens || {};
+      const displayName = isOpen && editedPack ? editedPack.name : rec.name;
+      stylesList.appendChild(buildRowLi({
+        uri: rec.uri,
+        kind,
+        name: displayName,
+        tokens: sourceTokens,
+        bound: describeBinding(rec.uri, kind),
+        isOpen,
+        isNew: false,
+      }));
     });
+    wireOpenRowEditor();
     refreshDiagramPackPickers();
     refreshBoxStylePicker();
   } catch (e) {
@@ -1153,6 +1142,48 @@ async function refreshStylesPane(): Promise<void> {
   }
 }
 
+interface RowSpec {
+  uri: string;
+  kind: StyleKind;
+  name: string;
+  tokens: Record<string, string>;
+  bound: string | null;
+  isOpen: boolean;
+  isNew: boolean;
+}
+
+function buildRowLi(spec: RowSpec): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className = "style-row";
+  li.dataset.uri = spec.uri;
+  li.dataset.kind = spec.kind;
+  if (spec.isOpen) li.classList.add("is-open");
+  if (spec.isNew) li.classList.add("is-new");
+  if (spec.bound) li.classList.add("is-bound");
+  const colorEntries = Object.entries(spec.tokens).filter(([, v]) => /^#[0-9a-fA-F]{6}$/.test(v));
+  const swatches = colorEntries.slice(0, 8).map(([n, v]) =>
+    `<span class="style-swatch" style="background:${esc(v)}" title="${esc(n)}: ${esc(v)}"></span>`
+  ).join("");
+  const uriLine = spec.isNew
+    ? `<span class="style-row-uri-placeholder">unsaved · save to assign URI</span>`
+    : `<div class="style-row-uri">${esc(spec.uri)}</div>`;
+  li.innerHTML = `
+    <div class="style-row-summary" data-role="summary">
+      <div class="style-row-line1">
+        <span class="style-row-kind kind-${spec.kind}">${spec.kind}</span>
+        <span class="style-row-swatches">${swatches}</span>
+      </div>
+      <div class="style-row-name">
+        ${esc(spec.name)}
+        ${spec.bound ? `<span class="style-row-bound">${esc(spec.bound)}</span>` : ""}
+      </div>
+      ${uriLine}
+    </div>
+    <div class="style-row-editor">${spec.isOpen && editedPack ? renderEditorBody(editedPack, !spec.isNew) : ""}</div>
+  `;
+  return li;
+}
+
 // "bound (canvas)" / "bound (default)" / "bound (per-box)" or null.
 function describeBinding(uri: string, kind: StyleKind): string | null {
   if (kind === "canvas" && state.canvasStyleUri === uri) return "bound · canvas";
@@ -1161,34 +1192,33 @@ function describeBinding(uri: string, kind: StyleKind): string | null {
   return null;
 }
 
-function openStyleEditor(_uri: string | null, pack: StylePack): void {
-  const kind: StyleKind = pack.kind === "canvas" ? "canvas" : "object";
-  // Deep-clone so live edits don't leak into the list's loaded record.
-  editedPack = { name: pack.name, kind, tokens: { ...(pack.tokens || {}) } };
-  // Seed the live preview so the canvas matches the editor on open.
-  primeActiveTokensFor(editedPack);
-  styleEditor.hidden = false;
+// HTML for the inline editor. `canApply` controls whether the "apply"
+// button is rendered — false for a not-yet-saved new pack, since
+// there's no URI to bind yet.
+function renderEditorBody(pack: StylePack, canApply: boolean): string {
+  const kind = pack.kind === "canvas" ? "canvas" : "object";
   const defs = tokenDefsFor(kind);
-  // For canvas packs the gradient rows are only relevant when bgMode is
-  // `gradient`; tag them so CSS can hide them otherwise.
-  const currentBgMode = editedPack.tokens?.bgMode ?? DEFAULT_CANVAS_TOKENS.bgMode;
+  const currentBgMode = pack.tokens?.bgMode ?? DEFAULT_CANVAS_TOKENS.bgMode;
   const gridClass = `style-token-grid${currentBgMode === "gradient" ? " is-gradient" : ""}`;
-  styleEditor.innerHTML = `
+  const applyBtn = canApply
+    ? `<button class="btn" type="button" data-editor-action="apply">↻ apply</button>`
+    : "";
+  return `
     <header class="style-editor-header">
       <label class="field">
         <span>pack name</span>
-        <input id="style-name-input" type="text" value="${esc(editedPack.name)}"/>
+        <input data-editor-name type="text" value="${esc(pack.name)}"/>
       </label>
       <span class="style-editor-kind kind-${kind}">${kind} pack</span>
       <div class="style-editor-actions">
-        <button class="btn" type="button" id="style-save">save</button>
-        <button class="btn" type="button" id="style-save-apply">save &amp; apply</button>
-        <button class="btn-mini" type="button" id="style-cancel">cancel</button>
+        ${applyBtn}
+        <button class="btn" type="button" data-editor-action="save">save</button>
+        <button class="btn-mini" type="button" data-editor-action="cancel">cancel</button>
       </div>
     </header>
     <div class="${gridClass}">
       ${defs.map((t) => {
-        const v = editedPack!.tokens?.[t.name] ?? t.default;
+        const v = pack.tokens?.[t.name] ?? t.default;
         const isGradientRow = t.name === "gradientFrom" || t.name === "gradientTo";
         const extraCls = isGradientRow ? " style-token-row-gradient" : "";
         if (t.control === "font") {
@@ -1223,9 +1253,15 @@ function openStyleEditor(_uri: string | null, pack: StylePack): void {
           </label>`;
       }).join("")}
     </div>`;
-  // Wire live preview. Color & hex inputs are paired and bidirectionally
-  // synced; the font select fires `change` rather than `input`.
-  styleEditor.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-token]").forEach((inp) => {
+}
+
+// Wire the inputs and action buttons of the editor inside the currently
+// open row. Called after every list re-render so the live-preview hooks
+// always point at the visible DOM.
+function wireOpenRowEditor(): void {
+  const editor = stylesList.querySelector<HTMLElement>(".style-row.is-open .style-row-editor");
+  if (!editor) return;
+  editor.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-token]").forEach((inp) => {
     inp.addEventListener(inp.tagName === "SELECT" ? "change" : "input", () => {
       const name = inp.dataset.token!;
       const ctrl = inp.dataset.control;
@@ -1233,12 +1269,12 @@ function openStyleEditor(_uri: string | null, pack: StylePack): void {
       if (ctrl === "hex") {
         if (!/^#[0-9a-fA-F]{6}$/.test(value)) return;        // wait for valid hex
         value = value.toLowerCase();
-        const partner = styleEditor.querySelector<HTMLInputElement>(
+        const partner = editor.querySelector<HTMLInputElement>(
           `input[data-token="${name}"][data-control="color"]`,
         );
         if (partner) partner.value = value;
       } else if (ctrl === "color") {
-        const partner = styleEditor.querySelector<HTMLInputElement>(
+        const partner = editor.querySelector<HTMLInputElement>(
           `input[data-token="${name}"][data-control="hex"]`,
         );
         if (partner) partner.value = value;
@@ -1246,16 +1282,39 @@ function openStyleEditor(_uri: string | null, pack: StylePack): void {
       writeEditedToken(name, value);
     });
   });
-  const nameInput = styleEditor.querySelector<HTMLInputElement>("#style-name-input")!;
-  nameInput.addEventListener("input", () => {
-    if (editedPack) editedPack.name = nameInput.value;
+  const nameInput = editor.querySelector<HTMLInputElement>("[data-editor-name]");
+  if (nameInput) {
+    nameInput.addEventListener("input", () => {
+      if (editedPack) editedPack.name = nameInput.value;
+    });
+  }
+  editor.querySelectorAll<HTMLButtonElement>("[data-editor-action]").forEach((btn) => {
+    const action = btn.dataset.editorAction;
+    btn.addEventListener("click", () => {
+      if (action === "cancel") { closeStyleEditor(); refreshStylesPane(); }
+      else if (action === "save") void saveEditedPack();
+      else if (action === "apply") void applyEditedPack();
+    });
   });
-  document.querySelector<HTMLButtonElement>("#style-cancel")!
-    .addEventListener("click", () => { closeStyleEditor(); refreshStylesPane(); });
-  document.querySelector<HTMLButtonElement>("#style-save")!
-    .addEventListener("click", () => saveStyleEdit(false));
-  document.querySelector<HTMLButtonElement>("#style-save-apply")!
-    .addEventListener("click", () => saveStyleEdit(true));
+}
+
+// Open an existing pack inline in its row.
+async function openPackInRow(uri: string): Promise<void> {
+  if (activePackUri === uri && !editingNewKind) return;       // already open
+  closeStyleEditor();
+  try {
+    const rec = await styleStore.load(uri);
+    if (!rec) { showMessage("pack not found", "warn"); return; }
+    const kind: StyleKind = rec.pack.kind === "canvas" ? "canvas" : "object";
+    editedPack = { name: rec.name, kind, tokens: { ...(rec.pack.tokens || {}) } };
+    activePackUri = uri;
+    editingNewKind = null;
+    primeActiveTokensFor(editedPack);
+    refreshStylesPane();
+  } catch (err) {
+    console.warn("load pack failed", err);
+    showMessage("couldn't load pack", "warn");
+  }
 }
 
 // Update the working pack and the matching active token set so the canvas
@@ -1271,7 +1330,7 @@ function writeEditedToken(name: string, value: string): void {
     }
     // Toggle gradient-row visibility when background mode changes.
     if (name === "bgMode") {
-      const grid = styleEditor.querySelector(".style-token-grid");
+      const grid = stylesList.querySelector(".style-row.is-open .style-token-grid");
       if (grid) grid.classList.toggle("is-gradient", value === "gradient");
     }
   } else {
@@ -1297,27 +1356,27 @@ function primeActiveTokensFor(pack: StylePack): void {
 }
 
 function closeStyleEditor(): void {
-  styleEditor.hidden = true;
-  styleEditor.innerHTML = "";
   editedPack = null;
+  activePackUri = null;
+  editingNewKind = null;
   // Revert the live preview by re-resolving every binding from state.
   void applyBindings();
 }
 
-async function saveStyleEdit(alsoApply: boolean): Promise<void> {
+// Save the current edits. If the pack matches whatever slot is currently
+// bound (canvas or object default), re-apply so the rest of the cache
+// picks up the new tokens too.
+async function saveEditedPack(): Promise<void> {
   if (!editedPack) return;
-  const btnIds = ["#style-save", "#style-save-apply", "#style-cancel"];
-  const buttons = btnIds.map((s) => document.querySelector<HTMLButtonElement>(s)).filter(Boolean) as HTMLButtonElement[];
+  const buttons = stylesList.querySelectorAll<HTMLButtonElement>(".style-row.is-open [data-editor-action]");
   buttons.forEach((b) => { b.disabled = true; });
   try {
     const rec = await styleStore.save(editedPack);
     showMessage(`saved · ${rec.slug}`, "ok");
-    const matchingSlot = rec.pack.kind === "canvas" ? "canvasStyleUri" : "objectStyleUri";
-    if (alsoApply) {
-      state[matchingSlot] = rec.uri;
-      saveDraft();
-    }
-    if (state[matchingSlot] === rec.uri) {
+    editingNewKind = null;
+    activePackUri = rec.uri;
+    const slot = rec.pack.kind === "canvas" ? state.canvasStyleUri : state.objectStyleUri;
+    if (slot === rec.uri || state.boxes.some((b) => b.styleUri === rec.uri)) {
       await applyBindings();
     }
     refreshStylesPane();
@@ -1329,42 +1388,47 @@ async function saveStyleEdit(alsoApply: boolean): Promise<void> {
   }
 }
 
+// Save and bind in one click — the user-visible "apply" button. For a
+// new pack this assigns it a URI then binds; for an existing pack it
+// persists the edits and binds to the matching slot.
+async function applyEditedPack(): Promise<void> {
+  if (!editedPack) return;
+  const buttons = stylesList.querySelectorAll<HTMLButtonElement>(".style-row.is-open [data-editor-action]");
+  buttons.forEach((b) => { b.disabled = true; });
+  try {
+    const rec = await styleStore.save(editedPack);
+    showMessage(`saved · ${rec.slug}`, "ok");
+    editingNewKind = null;
+    activePackUri = rec.uri;
+    const matchingSlot: "canvasStyleUri" | "objectStyleUri" =
+      rec.pack.kind === "canvas" ? "canvasStyleUri" : "objectStyleUri";
+    state[matchingSlot] = rec.uri;
+    saveDraft();
+    await applyBindings();
+    refreshDiagramPackPickers();
+    refreshStylesPane();
+    showMessage(`bound · ${rec.slug} (${rec.pack.kind})`, "ok");
+  } catch (err) {
+    console.warn("apply failed", err);
+    showMessage("apply failed", "warn");
+  } finally {
+    buttons.forEach((b) => { b.disabled = false; });
+  }
+}
+
 function newStylePack(kind: StyleKind): void {
+  // Close any open row first so only one editor shows at a time.
+  closeStyleEditor();
   const defs = tokenDefsFor(kind);
-  const blank: StylePack = {
+  editedPack = {
     name: `new ${kind} pack`,
     kind,
     tokens: Object.fromEntries(defs.map((d) => [d.name, d.default])),
   };
-  openStyleEditor(null, blank);
-}
-
-// Apply a pack to the matching diagram-level slot (canvas or object
-// default). Per-box overrides go through the inspector instead.
-async function applyPackToDiagram(uri: string): Promise<void> {
-  const pack = cachedPackList.find((p) => p.uri === uri);
-  if (!pack) {
-    // Fall back to loading the pack to discover its kind.
-    try {
-      const rec = await styleStore.load(uri);
-      if (!rec) { showMessage("pack not found", "warn"); return; }
-      applyByKind(rec.pack.kind === "canvas" ? "canvas" : "object", uri);
-    } catch (err) {
-      console.warn("apply failed", err);
-      showMessage("couldn't load pack", "warn");
-    }
-    return;
-  }
-  applyByKind(pack.kind, uri);
-}
-
-function applyByKind(kind: StyleKind, uri: string): void {
-  if (kind === "canvas") state.canvasStyleUri = uri;
-  else state.objectStyleUri = uri;
-  saveDraft();
-  void applyBindings();
+  editingNewKind = kind;
+  activePackUri = null;
+  primeActiveTokensFor(editedPack);
   refreshStylesPane();
-  showMessage(`bound · ${styleNs.slugFromUri(uri)} (${kind})`, "ok");
 }
 
 async function refreshDiagramPackPickers(): Promise<void> {
