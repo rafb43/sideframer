@@ -33,7 +33,8 @@ const SECTIONS: Section[] = [
   {
     title: "draw mode",
     shortcuts: [
-      { keys: ["double-click"], desc: "add a box on the empty canvas" },
+      { keys: ["click"], desc: "add a box on the empty canvas (or clear selection)" },
+      { keys: ["click box"], desc: "select a box (focus moves to its label)" },
       { keys: ["drag"], desc: "move a selected box" },
       { keys: ["delete", "backspace"], desc: "remove the selected box" },
     ],

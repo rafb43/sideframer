@@ -386,7 +386,7 @@ function bootDiagrammer(): void {
 const HINTS: Record<Mode, string> = {
   gallery: "gallery — saved diagrams · click a tile to open · g / v / d / c switch modes",
   view: "view — read-only · g / v / d / c switch modes",
-  draw: "draw — double-click empty canvas to add a box · drag to move · esc / g / v / c switch modes",
+  draw: "draw — click empty canvas to add a box · drag to move · click a box to edit · esc / g / v / c switch modes",
   connect: "connect — click two boxes (or the center) to link them · esc / g / v / d switch modes",
 };
 
@@ -1042,7 +1042,6 @@ function bindCanvasEvents(): void {
   const svgEl = document.querySelector<SVGSVGElement>("#svg-root");
   if (!svgEl) return;
   svgEl.addEventListener("mousedown", onMouseDown);
-  svgEl.addEventListener("dblclick", onDoubleClick);
 }
 
 function svgPoint(svg: SVGSVGElement, evt: MouseEvent): { x: number; y: number } {
@@ -1125,19 +1124,17 @@ function onMouseDown(e: MouseEvent): void {
     return;
   }
 
+  // Empty canvas in draw mode: first click clears any existing selection;
+  // only a click while nothing is selected actually creates a new box. That
+  // way the inspector "close" gesture is just a click off the box and doesn't
+  // immediately drop a new box at the same coordinates.
   if (selectedId !== null || selectedConnectorId !== null) {
     selectedId = null;
     selectedConnectorId = null;
     render();
+    return;
   }
-}
 
-function onDoubleClick(e: MouseEvent): void {
-  if (currentMode !== "draw") return;
-  const svgEl = e.currentTarget as SVGSVGElement;
-  const { x, y } = svgPoint(svgEl, e);
-  const target = e.target as Element;
-  if (target.closest("g.box") || target.closest("g.center") || target.closest("g.connector")) return;
   if (!isInFrame(x, y) || isInCenter(x, y)) return;
 
   const newBox: Box = {

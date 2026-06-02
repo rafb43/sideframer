@@ -215,7 +215,7 @@ function sectionFooters(): string {
   return ds("footer · brand footer", "Status / hint line, then a thin brand strip.", `
     <div class="ds-preview">
       <footer class="shell-footer" style="height:32px">
-        <span class="hint">draw — double-click empty canvas to add a box · drag to move · esc / g / v / c switch modes</span>
+        <span class="hint">draw — click empty canvas to add a box · drag to move · click a box to edit · esc / g / v / c switch modes</span>
         <span class="footer-status">7 boxes · 4 connectors</span>
       </footer>
       <div class="brand-footer" style="height:22px">
@@ -427,7 +427,7 @@ function sectionShellPreview(): string {
       </div>
       <div style="background:var(--bg);height:160px;display:flex;align-items:center;justify-content:center;color:var(--mute);font-size:13px">— diagram canvas —</div>
       <footer class="shell-footer" style="height:32px">
-        <span class="hint">draw — double-click empty canvas to add a box · drag to move</span>
+        <span class="hint">draw — click empty canvas to add a box · drag to move</span>
         <span class="footer-status">7 boxes · 4 connectors</span>
       </footer>
       <div class="brand-footer" style="height:22px">
