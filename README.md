@@ -226,15 +226,21 @@ pick an object pack from the *style* field.
 
 ### b3nd brand packs
 
-The `bin/seed-b3nd-styles.mjs` script populates four packs derived from
+The `bin/seed-b3nd-styles.mjs` script populates ten packs derived from
 the b3nd brand book (`../b3nd-brand/DECISIONS.md` and `proof.html`):
 
 | Pack                 | Kind   | Notes                                                                  |
 |----------------------|--------|------------------------------------------------------------------------|
 | `b3nd-dark`          | canvas | Near-black `#050807` bg, system font, dim white axis labels            |
 | `b3nd-light`         | canvas | Warm white `#fffcf8` bg, system font, mid-grey axis labels             |
+| `b3nd-green-canvas`  | canvas | Mint wash `#eafff2` — "this chart is about a good outcome"             |
+| `b3nd-pink-canvas`   | canvas | Pink wash `#fff0f8` — brand moment / soft accent diagram               |
+| `b3nd-fail-canvas`   | canvas | Red wash `#fff0ee` — "this chart is about failure / incidents"         |
 | `b3nd-dark-object`   | object | Panel-mix fills, white labels, **neon green** `#39ff88` arrows (D7)    |
 | `b3nd-light-object`  | object | Cream fills, black labels, **pink-deep** `#9e0870` arrows (D7)         |
+| `b3nd-green-object`  | object | Neon-green fill `#39ff88`, black labels — "this box is OK / live"      |
+| `b3nd-pink-object`   | object | Bright pink fill `#ff3fb7`, white labels — brand / highlight box       |
+| `b3nd-fail-object`   | object | Signal-red fill `#ff4747`, white labels (D8 destructive) — error box   |
 
 ```
 node bin/seed-b3nd-styles.mjs                    # default server :5174
@@ -245,6 +251,11 @@ Bind the pair that matches the mode you want: a diagram pointing at
 `(b3nd-dark, b3nd-dark-object)` flips to light mode by switching the
 two pickers to `(b3nd-light, b3nd-light-object)` — every visual cue
 inverts, the diagram structure stays.
+
+The emphatic packs (`*-green-*`, `*-pink-*`, `*-fail-*`) layer on top:
+bind a `*-canvas` to colour the whole diagram, or apply a `*-object`
+pack per-box from the inspector to highlight a single shape inside an
+otherwise neutral diagram.
 
 ## Authoring diagrams programmatically
 
