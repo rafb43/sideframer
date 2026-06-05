@@ -7,7 +7,13 @@ import { defineConfig } from "vite";
 // (no grpc / proto generation). Alias the polyfill to a no-op shim.
 
 export default defineConfig({
-  server: { port: 5173 },
+  server: {
+    port: 5173,
+    // The b3nd-* packages are linked via `file:../b3nd-*` in package.json,
+    // so their source lives outside this project root. Allow Vite to serve
+    // from the parent workspace dir.
+    fs: { allow: ["..", "."] },
+  },
   resolve: {
     alias: [
       {
