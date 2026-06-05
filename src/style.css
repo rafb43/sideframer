@@ -235,24 +235,40 @@ body { min-height: 100vh; }
 #shell:not([data-mode="gallery"]) #gallery-pane { display: none; }
 #shell:not([data-mode="styles"])  #styles-pane  { display: none; }
 
-/* In styles mode, lay the editor next to the canvas so token edits
-   live-preview against the actual diagram. */
+/* In styles mode, stack the live-preview sample on top of the pack list
+   so the sample stays anchored as the list scrolls. The explicit height
+   pins mode-content to the viewport since #shell uses min-height — otherwise
+   the 1fr grid row would grow to fit a long pack list. */
 #shell[data-mode="styles"] .mode-content {
+  flex-direction: column;
   justify-content: flex-start;
   align-items: stretch;
   gap: 16px;
   padding: 16px;
-}
-
-#shell[data-mode="styles"] #styles-pane {
-  flex: 0 0 460px;
-  max-width: 460px;
-  overflow-y: auto;
+  overflow: hidden;
+  height: calc(100vh - var(--masthead-h) - var(--ctx-h) - var(--footer-h) - var(--brand-footer-h));
 }
 
 #shell[data-mode="styles"] #canvas-pane {
+  order: -1;
+  flex: 0 0 auto;
+  height: clamp(220px, 42vh, 460px);
+  width: 100%;
+}
+
+#shell[data-mode="styles"] #styles-pane {
   flex: 1 1 auto;
-  min-width: 0;
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Cap the list width even when the pane is full-width so rows stay readable. */
+#shell[data-mode="styles"] #styles-pane > * {
+  max-width: 880px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 #canvas-pane {
